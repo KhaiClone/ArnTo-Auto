@@ -1,0 +1,247 @@
+const TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const VIETQR_BASE = "https://img.vietqr.io/image";
+
+class AutoBank {
+    /**
+     * @param {import("discord.js").Client} client
+     * @param {string} vietqrChannelId
+     * @param {string} logWebhookUrl
+     */
+    constructor(client, vietqrChannelId, logWebhookUrl) {
+        this.client = client;
+        this.vietqrChannelId = vietqrChannelId;
+        this.logWebhookUrl = logWebhookUrl;
+
+        // In-memory callbacks: customId -> Function
+        this._callbacks = new Map();
+        // Active timeouts: customId -> TimeoutHandle
+        this._timeouts = new Map();
+
+        this._listen();
+    }
+
+    // ─────────────────────────────────────────────
+    //  PUBLIC API
+    // ─────────────────────────────────────────────
+
+    /**
+     * Register a pending payment with AutoBank.
+     * @param {number} amount
+     * @param {Object} context - persisted data (e.g. { paymentId, userId })
+     * @param {Function} callback - (err, data) => void
+     * @returns {{ customId: string, qrUrl: string }}
+     */
+    /**
+     * @param {number} amount
+     * @param {string} customId - the transferCode shown in QR addInfo and in the VietQR webhook message
+     * @param {Object} context - persisted data (e.g. { paymentId, userId })
+     * @param {Function} callback - (err, data) => void
+     */
+    createQR(amount, customId, context = {}, callback) {
+        this._callbacks.set(customId, callback);
+        this._scheduleTimeout(customId, TIMEOUT_MS);
+    }
+
+    /**
+     * Call on bot ready. Fetches missed messages, returns { paid, expired } lists.
+     * @returns {Promise<{ paid: Array, expired: Array }>}
+     */
+    async recover() {
+        const paid = [];
+        const expired = [];
+        const pending = await this.client.db.find("autobank_pending");
+        if (!pending || pending.length === 0) return { paid, expired };
+
+        let missedMessages = [];
+        try {
+            const channel = await this.client.channels.fetch(
+                this.vietqrChannelId,
+            );
+            if (channel) {
+                const fetched = await channel.messages.fetch({ limit: 100 });
+                missedMessages = fetched.map((m) => m.content);
+            }
+        } catch (err) {
+            console.error(
+                "[AutoBank] Failed to fetch missed messages:",
+                err.message,
+            );
+        }
+
+        const now = Date.now();
+        for (const entry of pending) {
+            const matchedMessage = missedMessages.find((c) =>
+                c.includes(entry.customId),
+            );
+
+            if (matchedMessage) {
+                await this.client.db.findOneAndDelete("autobank_pending", {
+                    customId: entry.customId,
+                });
+                await this._sendLog("PAID_MISSED", {
+                    ...entry,
+                    message: matchedMessage,
+                });
+                paid.push({
+                    customId: entry.customId,
+                    amount: entry.amount,
+                    context: entry.context,
+                    message: matchedMessage,
+                });
+                continue;
+            }
+
+            if (now >= entry.expireAt) {
+                await this.client.db.findOneAndDelete("autobank_pending", {
+                    customId: entry.customId,
+                });
+                await this._sendLog("EXPIRED_MISSED", entry);
+                expired.push({
+                    customId: entry.customId,
+                    amount: entry.amount,
+                    context: entry.context,
+                });
+                continue;
+            }
+
+            // Still within window — reschedule timeout, callback is gone
+            this._scheduleTimeout(entry.customId, entry.expireAt - now);
+        }
+
+        return { paid, expired };
+    }
+
+    // ─────────────────────────────────────────────
+    //  INTERNAL
+    // ─────────────────────────────────────────────
+
+    _scheduleTimeout(customId, delay) {
+        const handle = setTimeout(async () => {
+            this._timeouts.delete(customId);
+            // Delete from DB (may not exist if already paid)
+            const entry = await this.client.db.findOneAndDelete(
+                "autobank_pending",
+                { customId },
+            );
+
+            const callback = this._callbacks.get(customId);
+            this._callbacks.delete(customId);
+
+            if (!callback) return; // Already paid and handled
+
+            await this._sendLog(
+                "EXPIRED",
+                entry ?? { customId, amount: 0, context: {} },
+            );
+            callback(new Error("TIMEOUT"), {
+                customId,
+                context: entry?.context ?? {},
+            });
+        }, delay);
+        this._timeouts.set(customId, handle);
+    }
+
+    _listen() {
+        this.client.on("messageCreate", async (message) => {
+            if (message.channelId !== this.vietqrChannelId) return;
+            await this._handleMessage(message.content);
+        });
+    }
+
+    async _handleMessage(content) {
+        const pending = await this.client.db.find("autobank_pending");
+        if (!pending || pending.length === 0) return;
+
+        for (const entry of pending) {
+            if (!content.includes(entry.customId)) continue;
+
+            // Cancel scheduled timeout
+            const handle = this._timeouts.get(entry.customId);
+            if (handle) {
+                clearTimeout(handle);
+                this._timeouts.delete(entry.customId);
+            }
+
+            // Remove from DB
+            await this.client.db.findOneAndDelete("autobank_pending", {
+                customId: entry.customId,
+            });
+            await this._sendLog("PAID", { ...entry, message: content });
+
+            // Fire in-memory callback (if bot hasn't restarted)
+            const callback = this._callbacks.get(entry.customId);
+            this._callbacks.delete(entry.customId);
+            if (callback) {
+                callback(null, {
+                    customId: entry.customId,
+                    amount: entry.amount,
+                    context: entry.context,
+                    message: content,
+                });
+            }
+            break;
+        }
+    }
+
+    async _sendLog(status, entry) {
+        if (!this.logWebhookUrl) return;
+
+        const colors = {
+            PAID: 0x57f287,
+            EXPIRED: 0xed4245,
+            PAID_MISSED: 0xfee75c,
+            EXPIRED_MISSED: 0xeb459e,
+        };
+        const labels = {
+            PAID: "✅ Payment Received",
+            EXPIRED: "❌ Payment Expired",
+            PAID_MISSED: "⚠️ Missed Payment (Recovered)",
+            EXPIRED_MISSED: "⏰ Missed Expiry (Recovered)",
+        };
+
+        const embed = {
+            title: labels[status] || status,
+            color: colors[status] || 0x99aab5,
+            fields: [
+                {
+                    name: "Custom ID",
+                    value: `\`${entry.customId}\``,
+                    inline: true,
+                },
+                {
+                    name: "Amount",
+                    value: `${Number(entry.amount).toLocaleString()} VND`,
+                    inline: true,
+                },
+                { name: "Status", value: status, inline: true },
+                {
+                    name: "Context",
+                    value: `\`\`\`json\n${JSON.stringify(entry.context, null, 2)}\`\`\``,
+                    inline: false,
+                },
+            ],
+            timestamp: new Date().toISOString(),
+            footer: { text: "AutoBank" },
+        };
+
+        if (entry.message) {
+            embed.fields.push({
+                name: "Webhook Message",
+                value: String(entry.message).slice(0, 1024),
+                inline: false,
+            });
+        }
+
+        try {
+            await fetch(this.logWebhookUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ embeds: [embed] }),
+            });
+        } catch (err) {
+            console.error("[AutoBank] Failed to send log:", err.message);
+        }
+    }
+}
+
+module.exports = AutoBank;

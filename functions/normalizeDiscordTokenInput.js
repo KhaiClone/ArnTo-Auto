@@ -1,15 +1,3 @@
-function sleep(seconds) {
-    return new Promise((resolve) => setTimeout(resolve, seconds * 1000));
-}
-
-function formatUptime(startedAt) {
-    const diff = Math.floor((Date.now() - startedAt) / 1000);
-    const hours = Math.floor(diff / 3600);
-    const minutes = Math.floor((diff % 3600) / 60);
-    const seconds = diff % 60;
-    return `${hours}h ${minutes}m ${seconds}s`;
-}
-
 function normalizeDiscordTokenInput(value) {
     // Bỏ mọi khoảng trắng (space, tab, xuống dòng) — khách hay dán token thừa hoặc giữa các phần
     let token = String(value ?? "").replace(/\s+/g, "");
@@ -38,5 +26,4 @@ function normalizeDiscordTokenInput(value) {
     return token;
 }
 
-
-module.exports = { sleep, formatUptime, normalizeDiscordTokenInput };
+module.exports = normalizeDiscordTokenInput;

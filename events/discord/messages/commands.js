@@ -1,7 +1,11 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
-const { getRunningMap, resolveDiscordAccount, startAccount, setAllowedQuests } = require("../../../extensions/accounts");
-const { getTokenRefreshRecord } = require("../../../extensions/storage");
-const { normalizeDiscordTokenInput } = require("../../../bot/utils");
+const {
+    getRunningMap,
+    resolveDiscordAccount,
+    startAccount,
+    setAllowedQuests,
+} = require("../../../extensions/AutoQuest");
+const { getTokenRefreshRecord } = require("../../../extensions/AutoQuest");
 
 module.exports = {
     name: "messageCreate",
@@ -12,26 +16,48 @@ module.exports = {
         // ── DM: refresh token flow ─────────────────────────────────────────────
         if (!guild) {
             try {
-                const refreshRecord = await getTokenRefreshRecord(client, author.id);
+                const refreshRecord = await getTokenRefreshRecord(
+                    client,
+                    author.id,
+                );
                 if (!refreshRecord) return;
 
-                const token = normalizeDiscordTokenInput(message.content);
+                const token = client.funcs.normalizeDiscordTokenInput(
+                    message.content,
+                );
                 if (!token) {
                     return message.reply({
-                        embeds: [client.embed("Tin nhắn trống hoặc token không hợp lệ. Hãy gửi lại token đầy đủ.", { title: "Token không hợp lệ", color: 0xfee75c })],
+                        embeds: [
+                            client.embed(
+                                "Tin nhắn trống hoặc token không hợp lệ. Hãy gửi lại token đầy đủ.",
+                                {
+                                    title: "Token không hợp lệ",
+                                    color: 0xfee75c,
+                                },
+                            ),
+                        ],
                     });
                 }
 
                 const resolved = await resolveDiscordAccount(token);
                 if (!resolved.ok) {
                     return message.reply({
-                        embeds: [client.embed(resolved.reason, { title: "Kích hoạt thất bại" })],
+                        embeds: [
+                            client.embed(resolved.reason, {
+                                title: "Kích hoạt thất bại",
+                            }),
+                        ],
                     });
                 }
 
                 if (resolved.accountId !== refreshRecord.accountId) {
                     return message.reply({
-                        embeds: [client.embed(`Bạn chỉ được nhập lại token của account \`${refreshRecord.accountId}\`.`, { title: "Sai account" })],
+                        embeds: [
+                            client.embed(
+                                `Bạn chỉ được nhập lại token của account \`${refreshRecord.accountId}\`.`,
+                                { title: "Sai account" },
+                            ),
+                        ],
                     });
                 }
 
@@ -48,14 +74,25 @@ module.exports = {
 
                 if (!result.ok) {
                     return message.reply({
-                        embeds: [client.embed(result.reason, { title: "Kích hoạt thất bại" })],
+                        embeds: [
+                            client.embed(result.reason, {
+                                title: "Kích hoạt thất bại",
+                            }),
+                        ],
                     });
                 }
 
                 // Update stored token after refresh
-                const runningEntry = getRunningMap(author.id).get(result.accountId);
+                const runningEntry = getRunningMap(author.id).get(
+                    result.accountId,
+                );
                 if (runningEntry?.allowedQuestIds instanceof Set) {
-                    await setAllowedQuests(client, author.id, result.accountId, [...runningEntry.allowedQuestIds]);
+                    await setAllowedQuests(
+                        client,
+                        author.id,
+                        result.accountId,
+                        [...runningEntry.allowedQuestIds],
+                    );
                 }
 
                 return message.reply({
@@ -64,15 +101,26 @@ module.exports = {
                             title: "Kích hoạt thành công",
                             color: 0x57f287,
                             fields: [
-                                { name: "Tài khoản", value: result.username, inline: true },
-                                { name: "ID", value: `\`${result.accountId}\``, inline: true },
+                                {
+                                    name: "Tài khoản",
+                                    value: result.username,
+                                    inline: true,
+                                },
+                                {
+                                    name: "ID",
+                                    value: `\`${result.accountId}\``,
+                                    inline: true,
+                                },
                             ],
                             timestamp: true,
                         }),
-                        client.embed("Token mới đã được cập nhật. Bot sẽ tiếp tục các quest còn lại.", {
-                            title: "Đã tiếp tục quest đã chọn",
-                            color: 0x57f287,
-                        }),
+                        client.embed(
+                            "Token mới đã được cập nhật. Bot sẽ tiếp tục các quest còn lại.",
+                            {
+                                title: "Đã tiếp tục quest đã chọn",
+                                color: 0x57f287,
+                            },
+                        ),
                     ],
                 });
             } catch (err) {
@@ -93,7 +141,11 @@ module.exports = {
             client.textCommands.find((e) => e.name === name) ||
             client.textCommands.find((e) => e.aliases?.includes(name));
         if (!command) return;
-        if (command.category === "Development" && !client.configs.settings.devUserIds.includes(author.id)) return;
+        if (
+            command.category === "Development" &&
+            !client.configs.settings.devUserIds.includes(author.id)
+        )
+            return;
         command.execute(client, message, args);
     },
 };

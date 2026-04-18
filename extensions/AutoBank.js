@@ -1,11 +1,10 @@
 const TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
-const VIETQR_BASE = "https://img.vietqr.io/image";
 
 class AutoBank {
     /**
      * @param {import("discord.js").Client} client
-     * @param {string} vietqrChannelId
-     * @param {string} logWebhookUrl
+     * @param {string} vietqrChannelId - Channel ID where VietQR sends webhook messages
+     * @param {string} logWebhookUrl   - Discord webhook URL for payment status logs
      */
     constructor(client, vietqrChannelId, logWebhookUrl) {
         this.client = client;
@@ -13,9 +12,16 @@ class AutoBank {
         this.logWebhookUrl = logWebhookUrl;
 
         // In-memory callbacks: customId -> Function
+        // Lost on restart — _missedHandlers covers that case
         this._callbacks = new Map();
+
         // Active timeouts: customId -> TimeoutHandle
         this._timeouts = new Map();
+
+        // Named recovery handlers: handlerName -> async Function(client, entry)
+        // Registered by each feature on startup via registerMissedHandler()
+        // Looked up by entry.context._handler when callback is missing after restart
+        this._missedHandlers = new Map();
 
         this._listen();
     }
@@ -25,17 +31,47 @@ class AutoBank {
     // ─────────────────────────────────────────────
 
     /**
-     * Register a pending payment with AutoBank.
-     * @param {number} amount
-     * @param {Object} context - persisted data (e.g. { paymentId, userId })
-     * @param {Function} callback - (err, data) => void
-     * @returns {{ customId: string, qrUrl: string }}
+     * Register a named recovery handler for a specific feature.
+     * Must be called on every bot startup before any payments can arrive.
+     * When the bot restarts and a live payment arrives with no in-memory callback,
+     * AutoBank looks up entry.context._handler and calls this function instead.
+     *
+     * @param {string} handlerName - Unique name matching the _handler field in context
+     * @param {Function} fn        - async (client, entry) => void
+     *                               entry = { customId, amount, context, message }
+     *
+     * @example
+     * client.autoBank.registerMissedHandler("quest_payment", async (client, entry) => {
+     *     const { markPaymentAsPaid, unlockPaymentIfPaid } = require("./autoQuest");
+     *     const paid = await markPaymentAsPaid(client, entry.context.paymentId);
+     *     if (paid) await unlockPaymentIfPaid(client, paid);
+     * });
      */
+    registerMissedHandler(handlerName, fn) {
+        if (typeof fn !== "function")
+            throw new Error(
+                `AutoBank: handler "${handlerName}" must be a function`,
+            );
+        this._missedHandlers.set(handlerName, fn);
+    }
+
     /**
-     * @param {number} amount
-     * @param {string} customId - the transferCode shown in QR addInfo and in the VietQR webhook message
-     * @param {Object} context - persisted data (e.g. { paymentId, userId })
-     * @param {Function} callback - (err, data) => void
+     * Register a pending payment with AutoBank.
+     *
+     * @param {number}   amount   - Payment amount in VND
+     * @param {string}   customId - The transferCode that appears in the VietQR webhook message
+     * @param {Object}   context  - Data to persist in DB (must include _handler: "your_handler_name")
+     * @param {Function} callback - (err, data) => void — called on payment or timeout
+     *
+     * @example
+     * client.autoBank.createQR(50000, transferCode, {
+     *     _handler: "quest_payment",   // <-- links to registerMissedHandler
+     *     paymentId: payment.id,
+     *     userId: interaction.user.id,
+     * }, (err, data) => {
+     *     if (err) return; // timeout
+     *     // handle live payment
+     * });
      */
     createQR(amount, customId, context = {}, callback) {
         this._callbacks.set(customId, callback);
@@ -43,7 +79,10 @@ class AutoBank {
     }
 
     /**
-     * Call on bot ready. Fetches missed messages, returns { paid, expired } lists.
+     * Call once on bot ready. Fetches missed messages from the VietQR channel,
+     * matches against pending DB entries, fires recovery handlers for paid ones,
+     * and reschedules timeouts for entries still within their window.
+     *
      * @returns {Promise<{ paid: Array, expired: Array }>}
      */
     async recover() {
@@ -104,7 +143,7 @@ class AutoBank {
                 continue;
             }
 
-            // Still within window — reschedule timeout, callback is gone
+            // Still within window — reschedule timeout (callback is gone after restart)
             this._scheduleTimeout(entry.customId, entry.expireAt - now);
         }
 
@@ -118,7 +157,6 @@ class AutoBank {
     _scheduleTimeout(customId, delay) {
         const handle = setTimeout(async () => {
             this._timeouts.delete(customId);
-            // Delete from DB (may not exist if already paid)
             const entry = await this.client.db.findOneAndDelete(
                 "autobank_pending",
                 { customId },
@@ -168,16 +206,42 @@ class AutoBank {
             });
             await this._sendLog("PAID", { ...entry, message: content });
 
-            // Fire in-memory callback (if bot hasn't restarted)
             const callback = this._callbacks.get(entry.customId);
             this._callbacks.delete(entry.customId);
+
             if (callback) {
+                // Normal flow: bot was running, fire the in-memory callback
                 callback(null, {
                     customId: entry.customId,
                     amount: entry.amount,
                     context: entry.context,
                     message: content,
                 });
+            } else {
+                // Bot restarted: callback is gone — look up the named recovery handler
+                const handlerName = entry.context?._handler;
+                const missedHandler = handlerName
+                    ? this._missedHandlers.get(handlerName)
+                    : null;
+
+                if (missedHandler) {
+                    try {
+                        await missedHandler(this.client, {
+                            customId: entry.customId,
+                            amount: entry.amount,
+                            context: entry.context,
+                            message: content,
+                        });
+                    } catch (e) {
+                        console.error(
+                            `[AutoBank] missedHandler "${handlerName}" error: ${e.message}`,
+                        );
+                    }
+                } else {
+                    console.warn(
+                        `[AutoBank] Payment received but no handler found for "${handlerName}" — customId: ${entry.customId}`,
+                    );
+                }
             }
             break;
         }

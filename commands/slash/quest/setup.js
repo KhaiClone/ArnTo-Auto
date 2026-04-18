@@ -43,8 +43,7 @@ module.exports = {
                     value: "Chuyển đúng mã nội dung để hệ thống tự xác nhận.",
                     inline: true,
                 },
-            )
-            .setTimestamp();
+            );
 
         if (s.questPanelThumbUrl) embed.setThumbnail(s.questPanelThumbUrl);
         if (s.questPanelBannerUrl) embed.setImage(s.questPanelBannerUrl);

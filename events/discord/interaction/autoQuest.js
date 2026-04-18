@@ -34,17 +34,14 @@ const {
 module.exports = {
     name: "interactionCreate",
     async execute(client, interaction) {
-        if (!interaction.guild) return;
-
         // Only handle quest-namespaced interactions
         const id = interaction.customId ?? "";
-        const isQuestInteraction =
-            id.startsWith("quest:") ||
-            (interaction.isChatInputCommand?.() === false &&
-                !interaction.isChatInputCommand?.() &&
-                !interaction.isAutocomplete?.());
-
         if (!id.startsWith("quest:")) return;
+
+        // Allow DM interactions only for the refresh_token button
+        // All other quest interactions require a guild
+        const isDmAllowed = id.startsWith("quest:refresh_token:");
+        if (!interaction.guild && !isDmAllowed) return;
 
         try {
             if (interaction.isButton())
@@ -338,10 +335,10 @@ async function _handleModal(client, interaction) {
             allowRestartIfRunning: false,
             addedAt: refreshRecord.addedAt,
             month: refreshRecord.month,
-            notifyStarted: true,
+            notifyStarted: false,
             forceNotifyQuestBatch: true,
             source: "refresh",
-            requireQuestSelection: true,
+            requireQuestSelection: true, // keeps stored quest selection
         });
 
         if (!result.ok) {
@@ -354,7 +351,50 @@ async function _handleModal(client, interaction) {
             });
         }
 
-        return _replyWithQuestSelection(client, interaction, result);
+        // Restore stored quest selection so the run loop resumes immediately
+        const {
+            setAllowedQuests,
+            getStoredSelectedQuestIds,
+        } = require("../../../extensions/AutoQuest");
+        const storedIds = await getStoredSelectedQuestIds(
+            client,
+            interaction.user.id,
+            result.accountId,
+        );
+        if (storedIds.length > 0) {
+            await setAllowedQuests(
+                client,
+                interaction.user.id,
+                result.accountId,
+                storedIds,
+            );
+        }
+
+        return interaction.editReply({
+            embeds: [
+                client.embed("", {
+                    title: "Token đã được cập nhật",
+                    color: 0x57f287,
+                    fields: [
+                        {
+                            name: "Tài khoản",
+                            value: result.username,
+                            inline: true,
+                        },
+                        {
+                            name: "ID",
+                            value: `\`${result.accountId}\``,
+                            inline: true,
+                        },
+                    ],
+                    description:
+                        storedIds.length > 0
+                            ? "Bot đang tiếp tục chạy các quest đã chọn trước đó."
+                            : "Token đã được cập nhật. Hãy chọn lại quest để tiếp tục.",
+                    timestamp: true,
+                }),
+            ],
+        });
     }
 }
 

@@ -16,6 +16,7 @@ const {
     randomBytes,
 } = require("crypto");
 const normalizeDiscordTokenInput = require("../functions/normalizeDiscordTokenInput");
+const { nanoid } = require("nanoid");
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  SECTION 1 — DISCORD QUEST ENGINE
@@ -1152,7 +1153,6 @@ async function _runLoop(
             await sleep(1);
         }
     }
-    console.log(`${C.YELLOW}[BOT]${C.RESET} Stopped: ${username}`);
 }
 
 async function startAccount(client, userId, token, options = {}) {
@@ -1192,11 +1192,10 @@ async function startAccount(client, userId, token, options = {}) {
         await sleep(1);
     }
 
-    const storedIds = await getStoredSelectedQuestIds(
-        client,
-        userId,
-        resolved.accountId,
-    );
+    // Use _storedSelectedQuestIds from options (passed by restoreAccounts) or load from DB
+    const storedIds =
+        options._storedSelectedQuestIds ??
+        (await getStoredSelectedQuestIds(client, userId, resolved.accountId));
     let allowedQuestIds, selectionShown;
     if (storedIds.length > 0) {
         allowedQuestIds = new Set(storedIds);
@@ -1268,11 +1267,20 @@ async function restoreAccounts(client) {
                         addedAt: record.addedAt,
                         month: record.month,
                         requireQuestSelection: true,
+                        // Pass stored selected quest IDs so run loop resumes immediately
+                        // without waiting for user to re-select quests
+                        _storedSelectedQuestIds: record.selectedQuestIds ?? [],
                     },
                 );
                 if (result.ok) {
                     total++;
-                    console.log(`Restored: ${record.username}`);
+                    // If account had selected quests stored, wake the loop immediately
+                    if ((record.selectedQuestIds ?? []).length > 0) {
+                        const entry = getRunningMap(userId).get(
+                            result.accountId,
+                        );
+                        if (entry) entry.wakeRequested = true;
+                    }
                 } else if (_isInvalidTokenResult(result))
                     await _removeDeadAccount(
                         client,
@@ -1305,7 +1313,7 @@ function _newPaymentId() {
     return `QP${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 }
 function _randomTransferCode() {
-    return `Quest${String(Math.floor(Math.random() * 100000)).padStart(5, "0")}`;
+    return `${nanoid(8).replaceAll("-", "").replaceAll("_", "")} Chuyen tien`;
 }
 
 function _encryptActivationToken(token, secret) {
@@ -1367,7 +1375,7 @@ async function _generateUniqueTransferCode(client) {
         const code = _randomTransferCode();
         if (!active.has(code)) return code;
     }
-    return `Quest${Date.now() % 100000}`;
+    return `${nanoid(8).replaceAll("-", "").replaceAll("_", "")} Chuyen tien`;
 }
 
 function buildVietQrUrl(client, amount, transferCode) {
@@ -1404,6 +1412,7 @@ async function createQuestPayment(client, { userId, accountId, questIds }) {
     // Register with AutoBank — transferCode is the customId because it's what appears in the VietQR webhook message
     if (client.autoBank) {
         const context = {
+            _handler: "quest_payment",
             paymentId: payment.id,
             userId,
             accountId,
@@ -1481,18 +1490,21 @@ async function cancelPayment(client, paymentId) {
     const list = await _readPayments(client);
     const idx = list.findIndex((i) => i.id === paymentId);
     if (idx < 0) return null;
-    list[idx] = { ...list[idx], status: "cancelled" };
+    const removed = list[idx];
+    list.splice(idx, 1);
     await _savePayments(client, list);
-    return list[idx];
+    return removed;
 }
 
 async function _markPaid(client, paymentId) {
     const list = await _readPayments(client);
     const idx = list.findIndex((i) => i.id === paymentId);
     if (idx < 0) return null;
-    list[idx] = { ...list[idx], status: "paid", paidAt: _now() };
+    const paid = { ...list[idx], status: "paid", paidAt: _now() };
+    // Remove from DB immediately — no need to keep paid records
+    list.splice(idx, 1);
     await _savePayments(client, list);
-    return list[idx];
+    return paid;
 }
 
 async function expireStalePayments(client) {
@@ -1500,14 +1512,13 @@ async function expireStalePayments(client) {
     const list = await _readPayments(client);
     let changed = false;
     const expiredNow = [];
-    const nextList = list.map((item) => {
+    const nextList = list.filter((item) => {
         if (item.status === "pending" && Number(item.expiresAt) <= current) {
             changed = true;
-            const exp = { ...item, status: "expired" };
-            expiredNow.push(exp);
-            return exp;
+            expiredNow.push({ ...item, status: "expired" });
+            return false; // remove from list
         }
-        return item;
+        return true;
     });
     if (changed) await _savePayments(client, nextList);
 

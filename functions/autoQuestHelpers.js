@@ -245,7 +245,7 @@ function buildPaymentEmbed(client, payment, note) {
         footer: {
             text:
                 payment.status === "pending"
-                    ? "Bot tự kiểm tra qua VietQR webhook. Chuyển đúng nội dung."
+                    ? "Chuyển đúng nội dung để tự động xác nhận giao dịch."
                     : payment.status === "paid"
                       ? "Đã xác nhận thanh toán. Bot bắt đầu chạy quest đã chọn."
                       : "Đơn đã hủy hoặc hết hạn.",

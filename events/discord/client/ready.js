@@ -1,10 +1,16 @@
-const { AttachmentBuilder } = require("discord.js");
+const {
+    AttachmentBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+} = require("discord.js");
 const AutoBank = require("../../../extensions/AutoBank");
 const {
     restoreAccounts,
     setAccountNotifier,
     expireStalePayments,
     getRecoverablePaidActivations,
+    markPaymentAsPaid,
 } = require("../../../extensions/AutoQuest");
 const {
     sendOrderLog,
@@ -48,6 +54,39 @@ module.exports = {
             s.logWebhookUrl,
         );
 
+        // Register recovery handler for quest payments
+        // Called when a payment arrives after bot restart (in-memory callback is gone)
+        client.autoBank.registerMissedHandler(
+            "quest_payment",
+            async (client, entry) => {
+                const { paymentId, userId } = entry.context;
+                const paidPayment = await markPaymentAsPaid(client, paymentId);
+                if (!paidPayment) return;
+
+                const user = await client.users.fetch(userId).catch(() => null);
+                if (user) {
+                    await user
+                        .send({
+                            embeds: [
+                                client.embed(
+                                    [
+                                        `Mã đơn: \`${paymentId}\``,
+                                        `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
+                                        "Đã xác nhận thanh toán. Đã mở chạy quest đã chọn.",
+                                    ].join("\n"),
+                                    {
+                                        title: "Đã xác nhận thanh toán",
+                                        color: 0x57f287,
+                                    },
+                                ),
+                            ],
+                        })
+                        .catch(() => null);
+                    await unlockPaymentIfPaid(client, paidPayment);
+                }
+            },
+        );
+
         // ── Account event notifier ─────────────────────────────────────────────
         setAccountNotifier(
             async ({
@@ -64,11 +103,12 @@ module.exports = {
                     const user = await client.users.fetch(userId);
 
                     if (type === "token_dead") {
+                        // Update order log to show paused state (not cancelled — quest may resume after token refresh)
                         await cancelOrderLog(
                             client,
                             userId,
                             accountId,
-                            "Đơn **bị hủy**: token account bị dead.",
+                            "⏸️ Đơn **tạm dừng**: token account bị dead. Nhập lại token để tiếp tục.",
                         );
                         return user.send({
                             embeds: [
@@ -89,17 +129,14 @@ module.exports = {
                                 ),
                             ],
                             components: [
-                                {
-                                    type: 1,
-                                    components: [
-                                        {
-                                            type: 2,
-                                            style: 1,
-                                            label: "Nhập token ngay",
-                                            custom_id: `quest:refresh_token:${accountId}`,
-                                        },
-                                    ],
-                                },
+                                new ActionRowBuilder().addComponents(
+                                    new ButtonBuilder()
+                                        .setCustomId(
+                                            `quest:refresh_token:${accountId}`,
+                                        )
+                                        .setLabel("Nhập token ngay")
+                                        .setStyle(ButtonStyle.Primary),
+                                ),
                             ],
                         });
                     }
@@ -189,8 +226,6 @@ module.exports = {
 
         // ── Restore accounts from DB ───────────────────────────────────────────
         const totalRestored = await restoreAccounts(client);
-        if (totalRestored > 0)
-            console.log(`Restored ${totalRestored} accounts`);
 
         // ── Recover missed payments (bot was offline) ──────────────────────────
         const { paid, expired } = await client.autoBank.recover();
@@ -199,19 +234,8 @@ module.exports = {
             try {
                 const { paymentId, userId } = entry.context;
 
-                // 1. Mark payment as paid in DB
                 const paidPayment = await markPaymentAsPaid(client, paymentId);
 
-                // 2. Unlock quest run for the user
-                if (paidPayment) {
-                    await unlockPaymentIfPaid(client, paidPayment).catch((e) =>
-                        console.warn(
-                            `[ready] unlock error for ${paymentId}: ${e.message}`,
-                        ),
-                    );
-                }
-
-                // 3. Notify user
                 const user = await client.users.fetch(userId).catch(() => null);
                 if (user)
                     await user.send({
@@ -229,6 +253,11 @@ module.exports = {
                             ),
                         ],
                     });
+                if (paidPayment) {
+                    await unlockPaymentIfPaid(client, paidPayment).catch(
+                        (e) => {},
+                    );
+                }
             } catch (e) {
                 console.warn(`[ready] paid recovery failed: ${e.message}`);
             }

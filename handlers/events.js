@@ -25,7 +25,7 @@ exports.init = (client) => {
         client.on(name, (...args) =>
             client.events.discord
                 .filter((e) => e.name === name)
-                .forEach((e) => e.execute(client, ...args))
+                .forEach((e) => e.execute(client, ...args)),
         );
     });
 };

@@ -15,6 +15,10 @@ module.exports = {
         100,
         parseInt(process.env.QUEST_PRICE_PER_ITEM || "2000") || 2000,
     ),
+    hypeSquadPrice: Math.max(
+        100,
+        parseInt(process.env.HYPESQUAD_PRICE || "5000") || 5000,
+    ),
 
     // ── Discord channels ───────────────────────────────────────────────────────
     vietqrChannelId: process.env.VIETQR_CHANNEL_ID || "",

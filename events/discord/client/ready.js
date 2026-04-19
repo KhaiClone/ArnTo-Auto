@@ -87,6 +87,19 @@ module.exports = {
             },
         );
 
+        // Register recovery handler for HypeSquad payments
+        client.autoBank.registerMissedHandler(
+            "hs_payment",
+            async (client, entry) => {
+                const {
+                    runBadgeChange,
+                    markHsPaymentPaid,
+                } = require("../../../events/discord/interaction/autoHypeSquad");
+                await markHsPaymentPaid(client, entry.context.paymentId);
+                await runBadgeChange(client, entry.context);
+            },
+        );
+
         // ── Account event notifier ─────────────────────────────────────────────
         setAccountNotifier(
             async ({

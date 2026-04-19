@@ -9,7 +9,7 @@ const {
 module.exports = {
     deferReply: { ephemeral: true },
     data: new SlashCommandBuilder()
-        .setName("restart")
+        .setName("quest-restart")
         .setDescription("Khởi động lại các account đã lưu"),
     async execute(client, interaction) {
         stopAllAccounts(interaction.user.id);

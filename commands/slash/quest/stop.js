@@ -4,7 +4,7 @@ const { getRunningMap, stopAccount } = require("../../../extensions/AutoQuest");
 module.exports = {
     deferReply: { ephemeral: true },
     data: new SlashCommandBuilder()
-        .setName("stop")
+        .setName("quest-stop")
         .setDescription("Dừng một account đang chạy")
         .addStringOption((o) =>
             o

@@ -8,7 +8,7 @@ const {
 module.exports = {
     deferReply: { ephemeral: true },
     data: new SlashCommandBuilder()
-        .setName("removeaccount")
+        .setName("quest-removeaccount")
         .setDescription("Xóa account đã lưu")
         .addStringOption((o) =>
             o

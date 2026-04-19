@@ -88,6 +88,44 @@ async function _handleButton(client, interaction) {
         );
     }
 
+    if (customId === "quest:check_token") {
+        const userMap = getRunningMap(interaction.user.id);
+        if (userMap.size === 0) {
+            return interaction.reply({
+                ephemeral: true,
+                embeds: [
+                    client.embed("Bạn chưa có account nào đang chạy.", {
+                        title: "Trạng thái",
+                        color: 0xfee75c,
+                    }),
+                ],
+            });
+        }
+        const fields = [];
+        for (const [accountId, entry] of userMap) {
+            fields.push({
+                name: entry.username,
+                value: [
+                    `ID: \`${accountId}\``,
+                    `Uptime: ${client.funcs.formatUptime(entry.startedAt)}`,
+                    `Quest hoàn thành: ${entry.completedCount}`,
+                ].join("\n"),
+                inline: true,
+            });
+        }
+        return interaction.reply({
+            ephemeral: true,
+            embeds: [
+                client.embed("", {
+                    title: `Trạng thái — ${userMap.size} account đang chạy`,
+                    color: 0x5865f2,
+                    fields,
+                    timestamp: true,
+                }),
+            ],
+        });
+    }
+
     // "Nhập token ngay" button sent via DM when token is dead
     if (customId.startsWith("quest:refresh_token:")) {
         const accountId = customId.split(":")[2];

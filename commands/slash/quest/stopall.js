@@ -7,7 +7,7 @@ const {
 module.exports = {
     deferReply: { ephemeral: true },
     data: new SlashCommandBuilder()
-        .setName("stopall")
+        .setName("quest-stopall")
         .setDescription("Dừng tất cả account đang chạy"),
     async execute(client, interaction) {
         const count = getRunningMap(interaction.user.id).size;

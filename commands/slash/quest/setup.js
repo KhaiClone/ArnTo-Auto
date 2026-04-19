@@ -10,7 +10,7 @@ const {
 module.exports = {
     deferReply: {},
     data: new SlashCommandBuilder()
-        .setName("setup")
+        .setName("quest-setup")
         .setDescription("Gửi panel Auto Quest vào kênh hiện tại")
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
@@ -52,6 +52,10 @@ module.exports = {
             new ButtonBuilder()
                 .setCustomId("quest:enter_token")
                 .setLabel("Nhập token")
+                .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+                .setCustomId("quest:check_token")
+                .setLabel("Kiểm tra")
                 .setStyle(ButtonStyle.Primary),
         );
 

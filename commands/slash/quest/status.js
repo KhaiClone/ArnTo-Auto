@@ -4,7 +4,7 @@ const { getRunningMap } = require("../../../extensions/AutoQuest");
 module.exports = {
     deferReply: { ephemeral: true },
     data: new SlashCommandBuilder()
-        .setName("status")
+        .setName("quest-status")
         .setDescription("Xem trạng thái các account đang chạy"),
     async execute(client, interaction) {
         const userMap = getRunningMap(interaction.user.id);

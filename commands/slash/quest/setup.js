@@ -45,8 +45,12 @@ module.exports = {
                 },
             );
 
-        if (s.questPanelThumbUrl) embed.setThumbnail(s.questPanelThumbUrl);
-        if (s.questPanelBannerUrl) embed.setImage(s.questPanelBannerUrl);
+        embed.setThumbnail(
+            "https://cdn.discordapp.com/attachments/1245991899450572912/1472842442083532922/1771223400597.png?ex=69e51f2a&is=69e3cdaa&hm=5cd91378b2cb945d82504bede11e04f1aa633510668895d7202b5adb19fe3937&",
+        );
+        embed.setImage(
+            "https://cdn.discordapp.com/attachments/1245991899450572912/1495136698206785597/1776538764448.png?ex=69e5260f&is=69e3d48f&hm=daaf336b476311fe623beaa951ade085c33336ef2c403252bd85b93fc586b23b&",
+        );
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()

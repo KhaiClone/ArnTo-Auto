@@ -30,7 +30,7 @@ module.exports = {
         client.guilds.cache.forEach((e) => {
             if (!client.configs.settings.guildIds.includes(e.id)) e.leave();
         });
-        require("../../../handlers/antiCrash");
+        // require("../../../handlers/antiCrash");
 
         if (process.env.EXPRESS === "true") {
             const express = require("express");

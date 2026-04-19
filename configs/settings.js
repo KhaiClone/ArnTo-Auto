@@ -25,8 +25,4 @@ module.exports = {
     logWebhookUrl: process.env.LOG_WEBHOOK_URL || "",
     orderLogChannelId: process.env.ORDER_LOG_CHANNEL_ID || "",
     orderLogTicketLabel: process.env.ORDER_LOG_TICKET_LABEL || "",
-
-    // ── Quest panel UI ─────────────────────────────────────────────────────────
-    questPanelThumbUrl: process.env.QUEST_PANEL_THUMB_URL || "",
-    questPanelBannerUrl: process.env.QUEST_PANEL_BANNER_URL || "",
 };

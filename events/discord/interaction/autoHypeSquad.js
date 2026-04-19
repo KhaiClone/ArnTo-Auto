@@ -44,6 +44,10 @@ const HOUSES = [
     },
 ];
 
+// ── Cache ──────────────────────────────────────────────────────────────────────
+// Lưu token tạm thời để tránh lỗi customId dài quá 100 ký tự
+const tokenCache = new Map();
+
 // ── DB helpers ─────────────────────────────────────────────────────────────────
 
 function _now() {
@@ -368,11 +372,27 @@ async function _handleButton(client, interaction) {
 // ── Select menu handler ────────────────────────────────────────────────────────
 
 async function _handleSelectMenu(client, interaction) {
-    if (!interaction.customId.startsWith("hs:select_house:")) return;
+    if (!interaction.customId.startsWith("hs:select:")) return;
 
-    // customId = "hs:select_house:{token_encoded}"
-    const tokenEncoded = interaction.customId.split(":").slice(2).join(":");
-    const token = Buffer.from(tokenEncoded, "base64").toString("utf8");
+    // Lấy sessionId từ customId và lấy token từ cache
+    const sessionId = interaction.customId.split(":")[2];
+    const token = tokenCache.get(sessionId);
+
+    // Xử lý trường hợp token không tồn tại hoặc đã hết hạn trong cache
+    if (!token) {
+        return interaction.update({
+            embeds: [
+                client.embed(
+                    "Phiên làm việc đã hết hạn hoặc token không tồn tại. Vui lòng bấm hủy đơn và nhập lại token.",
+                    { title: "Lỗi phiên" },
+                ),
+            ],
+            components: [],
+        });
+    }
+
+    // Xóa token khỏi cache sau khi dùng xong để dọn dẹp bộ nhớ
+    tokenCache.delete(sessionId);
 
     const houseId = parseInt(interaction.values[0]);
     const house = HOUSES.find((h) => h.id === houseId);
@@ -431,17 +451,28 @@ async function _handleModal(client, interaction) {
         });
     }
 
-    // Show house selection menu
-    // Encode token in base64 so it can be passed via customId safely
-    const tokenEncoded = Buffer.from(token).toString("base64");
+    // Tạo session ID và lưu token vào cache
+    const sessionId = Math.random().toString(36).slice(2, 12);
+    tokenCache.set(sessionId, token);
+
+    // Tự động xóa khỏi cache sau 15 phút nếu người dùng không chọn
+    setTimeout(
+        () => {
+            tokenCache.delete(sessionId);
+        },
+        15 * 60 * 1000,
+    );
+
+    // Gắn session ID vào customId thay vì toàn bộ token
     const menu = new StringSelectMenuBuilder()
-        .setCustomId(`hs:select_house:${tokenEncoded}`)
+        .setCustomId(`hs:select:${sessionId}`)
         .setPlaceholder("Chọn badge HypeSquad muốn đổi")
         .setMinValues(1)
         .setMaxValues(1)
         .addOptions(
             HOUSES.map((h) => ({
-                label: `${h.emoji} ${h.name}`,
+                label: h.name,
+                emoji: h.emoji,
                 value: String(h.id),
                 description: h.description,
             })),

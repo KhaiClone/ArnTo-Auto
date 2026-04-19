@@ -22,6 +22,7 @@ const { nanoid } = require("nanoid");
 //  SECTION 1 — DISCORD QUEST ENGINE
 // ══════════════════════════════════════════════════════════════════════════════
 
+const AUTO_REMOVE_INACTIVE_MS = 30 * 60 * 1000;
 const API_BASE = "https://discord.com/api/v9";
 const HEARTBEAT_INTERVAL = 20;
 const AUTO_ACCEPT = true;
@@ -1225,6 +1226,22 @@ async function startAccount(client, userId, token, options = {}) {
         selectionShown,
         wakeRequested: false,
     });
+    setTimeout(async () => {
+        const currentEntry = getRunningMap(userId).get(resolved.accountId);
+        if (!currentEntry) return; // already removed
+
+        const neverPaid =
+            currentEntry.completedCount === 0 &&
+            currentEntry.allowedQuestIds instanceof Set &&
+            currentEntry.allowedQuestIds.size === 0;
+
+        if (neverPaid) {
+            console.log(
+                `[AutoQuest] Auto-removing inactive account: ${resolved.username} (${resolved.accountId})`,
+            );
+            await _expireAccount(client, userId, resolved.accountId);
+        }
+    }, AUTO_REMOVE_INACTIVE_MS);
 
     _runLoop(
         client,

@@ -27,12 +27,10 @@ module.exports = {
         if (!result.ok) {
             return interaction.editReply({
                 embeds: [
-                    client.embed(
-                        result.record
-                            ? `Mã \`${code}\` đã được sử dụng rồi.\nĐược dùng lúc: ${new Date(result.record.usedAt).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}`
-                            : result.reason,
-                        { title: "Mã không hợp lệ", color: 0xed4245 },
-                    ),
+                    client.embed(result.reason, {
+                        title: "Mã không hợp lệ",
+                        color: 0xed4245,
+                    }),
                 ],
             });
         }

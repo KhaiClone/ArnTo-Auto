@@ -396,6 +396,11 @@ async function failOrder(client, paymentId, refundAmount) {
                 color: 0xed4245,
                 fields: [
                     {
+                        name: "📦 Mã đơn (Queue)",
+                        value: `\`${paymentId}\``,
+                        inline: false,
+                    },
+                    {
                         name: "💎 Số Robux",
                         value: `**${entry.robux.toLocaleString()} Robux**`,
                         inline: true,
@@ -468,13 +473,13 @@ async function checkRefundCode(client, code) {
 }
 
 /**
- * Mark a refund code as used (after admin has processed the refund).
+ * Remove a refund code from the database once admin has processed the refund.
  */
 async function markRefundUsed(client, code) {
     const refunds = await _readRefunds(client);
     const idx = refunds.findIndex((r) => r.code === code.toUpperCase());
     if (idx < 0) return false;
-    refunds[idx] = { ...refunds[idx], used: true, usedAt: Date.now() };
+    refunds.splice(idx, 1);
     await _saveRefunds(client, refunds);
     return true;
 }

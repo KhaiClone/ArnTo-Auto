@@ -278,6 +278,7 @@ async function editHsOrderLog(client, paymentId, userId, houseName, success) {
             title: "🏅 Đơn HypeSquad",
             color: success ? 0x57f287 : 0xed4245,
             fields: [
+                { name: "👤 Khách hàng", value: `<@${userId}>`, inline: true },
                 { name: "🎖️ Badge", value: `**${houseName}**`, inline: true },
                 { name: "📋 Trạng thái", value: statusText, inline: true },
             ],

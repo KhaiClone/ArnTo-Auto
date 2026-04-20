@@ -27,4 +27,5 @@ module.exports = {
     hypeSquadOrderLogChannelId:
         process.env.HYPESQUAD_ORDER_LOG_CHANNEL_ID || "",
     robuxOrderLogChannelId: process.env.ROBUX_ORDER_LOG_CHANNEL_ID || "",
+    robuxQueueChannelId: process.env.ROBUX_QUEUE_CHANNEL_ID || "",
 };

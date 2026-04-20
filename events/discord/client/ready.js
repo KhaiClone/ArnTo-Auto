@@ -250,6 +250,12 @@ module.exports = {
             },
         );
 
+        // ── Init Robux queue message ───────────────────────────────────────────
+        try {
+            const { updateQueueMessage } = require("../../../extensions/AutoRobux");
+            await updateQueueMessage(client);
+        } catch (e) { console.warn("[ready] updateQueueMessage error:", e.message); }
+
         // ── Recover missed payments (bot was offline) ──────────────────────────
         const { paid, expired } = await client.autoBank.recover();
 

@@ -164,7 +164,13 @@ async function _onPaymentPaid(client, context) {
     const { paymentId, userId, robux, gamepassLinks, accountName } = context;
 
     // Edit order log to show pending admin action
-    await editRobuxOrderLog(client, paymentId, robux, gamepassLink);
+    await editRobuxOrderLog(
+        client,
+        paymentId,
+        robux,
+        accountName,
+        gamepassLinks,
+    );
 
     // DM user
     const user = await client.users.fetch(userId).catch(() => null);
@@ -205,7 +211,8 @@ async function sendRobuxOrderLog(
     userId,
     robux,
     price,
-    gamepassLink,
+    accountName,
+    gamepassLinks,
 ) {
     if (!client.configs.settings.robuxOrderLogChannelId) return;
     try {
@@ -231,8 +238,13 @@ async function sendRobuxOrderLog(
                     inline: true,
                 },
                 {
+                    name: "👤 Tên tài khoản",
+                    value: accountName,
+                    inline: true,
+                },
+                {
                     name: "🔗 Link Gamepass",
-                    value: gamepassLink,
+                    value: gamepassLinks.join("\n"),
                     inline: false,
                 },
                 {
@@ -252,7 +264,13 @@ async function sendRobuxOrderLog(
     }
 }
 
-async function editRobuxOrderLog(client, paymentId, robux, gamepassLink) {
+async function editRobuxOrderLog(
+    client,
+    paymentId,
+    robux,
+    accountName,
+    gamepassLinks,
+) {
     if (!client.configs.settings.robuxOrderLogChannelId) return;
     const entry = _orderLogRegistry.get(paymentId);
     if (!entry) return;
@@ -272,8 +290,13 @@ async function editRobuxOrderLog(client, paymentId, robux, gamepassLink) {
                     inline: true,
                 },
                 {
+                    name: "👤 Tên tài khoản",
+                    value: accountName,
+                    inline: true,
+                },
+                {
                     name: "🔗 Link Gamepass",
-                    value: gamepassLink,
+                    value: gamepassLinks.join("\n"),
                     inline: false,
                 },
                 {
@@ -313,8 +336,13 @@ function buildRobuxPaymentEmbed(client, payment, note) {
                 inline: true,
             },
             {
+                name: "Tên tài khoản Roblox",
+                value: payment.accountName,
+                inline: true,
+            },
+            {
                 name: "Link Gamepass",
-                value: payment.gamepassLink,
+                value: payment.gamepassLinks.join("\n"),
                 inline: false,
             },
             {

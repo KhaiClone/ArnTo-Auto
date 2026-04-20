@@ -135,7 +135,6 @@ async function _handleSelectMenu(client, interaction) {
     const sessionId = Math.random().toString(36).slice(2, 12);
     sessionCache.set(sessionId, { robux: pkg.robux, price: pkg.price });
     setTimeout(() => sessionCache.delete(sessionId), 15 * 60 * 1000);
-    await interaction.update();
     return interaction.showModal(_buildGamepassModal(sessionId, pkg));
 }
 
@@ -146,10 +145,10 @@ async function _handleModal(client, interaction) {
 
     const sessionId = interaction.customId.split(":")[2];
     const session = sessionCache.get(sessionId);
-
+    await interaction.update({});
     if (!session) {
-        await interaction.deferReply({ ephemeral: true });
-        return interaction.editReply({
+        return interaction.followUp({
+            ephemeral: true,
             embeds: [
                 client.embed(
                     "Phiên làm việc đã hết hạn. Vui lòng chọn lại gói.",
@@ -176,8 +175,8 @@ async function _handleModal(client, interaction) {
             !link.startsWith("https://www.roblox.com/") &&
             !link.startsWith("https://roblox.com/")
         ) {
-            await interaction.deferReply({ ephemeral: true });
-            return interaction.editReply({
+            return interaction.followUp({
+                ephemeral: true,
                 embeds: [
                     client.embed(
                         `Link Gamepass #${i} không hợp lệ. Vui lòng nhập đúng link từ Roblox.`,
@@ -190,12 +189,11 @@ async function _handleModal(client, interaction) {
         gamepassLinks.push(link);
     }
 
-    await interaction.deferReply({ ephemeral: true });
-
     // Check existing pending payment again (race condition safety)
     const existed = await getOpenRobuxPayment(client, interaction.user.id);
     if (existed) {
-        return interaction.editReply({
+        return interaction.followUp({
+            ephemeral: true,
             embeds: [
                 buildRobuxPaymentEmbed(
                     client,
@@ -226,7 +224,8 @@ async function _handleModal(client, interaction) {
         gamepassLinks,
     );
 
-    return interaction.editReply({
+    return interaction.followUp({
+        ephemeral: true,
         embeds: [
             buildRobuxPaymentEmbed(
                 client,

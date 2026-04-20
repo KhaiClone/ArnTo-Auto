@@ -297,7 +297,7 @@ async function completeOrder(client, paymentId) {
                 color: 0x57f287,
                 fields: [
                     {
-                        name: "💎 Số Robux",
+                        name: "<:robux:1456493708382830735> Số Robux",
                         value: `**${entry.robux.toLocaleString()} Robux**`,
                         inline: true,
                     },
@@ -337,7 +337,7 @@ async function completeOrder(client, paymentId) {
                     client.embed(
                         [
                             `Mã đơn: \`${paymentId}\``,
-                            `💎 **${entry.robux.toLocaleString()} Robux** đã được nạp vào tài khoản **${entry.accountName}**.`,
+                            `<:robux:1456493708382830735> **${entry.robux.toLocaleString()} Robux** đã được nạp vào tài khoản **${entry.accountName}**.`,
                             "✅ Đơn hàng của bạn đã hoàn thành!",
                         ].join("\n"),
                         { title: "Đơn Robux hoàn thành", color: 0x57f287 },
@@ -406,7 +406,7 @@ async function failOrder(client, paymentId, refundAmount) {
                         inline: false,
                     },
                     {
-                        name: "💎 Số Robux",
+                        name: "<:robux:1456493708382830735> Số Robux",
                         value: `**${entry.robux.toLocaleString()} Robux**`,
                         inline: true,
                     },
@@ -542,7 +542,7 @@ function _buildQueueEmbed(client, queue) {
             ? ["*Không có đơn nào đang chờ xử lý.*"]
             : queue.map(
                   (item, i) =>
-                      `**#${i + 1}** | \`${item.paymentId}\` | 💎 ${item.robux.toLocaleString()} Robux | <@${item.userId}>`,
+                      `**#${i + 1}** | \`${item.paymentId}\` | <:robux:1456493708382830735> ${item.robux.toLocaleString()} Robux | <@${item.userId}>`,
               );
 
     return {
@@ -594,7 +594,7 @@ async function sendRobuxOrderLog(
                 },
                 { name: "👤 Khách hàng", value: `<@${userId}>`, inline: true },
                 {
-                    name: "💎 Số Robux",
+                    name: "<:robux:1456493708382830735> Số Robux",
                     value: `**${robux.toLocaleString()} Robux**`,
                     inline: true,
                 },
@@ -656,7 +656,7 @@ async function editRobuxOrderLog(
                     inline: false,
                 },
                 {
-                    name: "💎 Số Robux",
+                    name: "<:robux:1456493708382830735> Số Robux",
                     value: `**${robux.toLocaleString()} Robux**`,
                     inline: true,
                 },

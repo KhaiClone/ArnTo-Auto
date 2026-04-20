@@ -7,6 +7,7 @@
  */
 
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+const { nanoid } = require("nanoid");
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -32,7 +33,7 @@ function _newPaymentId() {
     return `RB${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 function _randomTransferCode() {
-    return `Robux${String(Math.floor(Math.random() * 100000)).padStart(5, "0")}`;
+    return `${nanoid(8).replaceAll("-", "").replaceAll("_", "")} Chuyen tien`;
 }
 
 function _buildVietQrUrl(client, amount, transferCode) {
@@ -62,7 +63,7 @@ async function _generateUniqueCode(client) {
         const code = _randomTransferCode();
         if (!active.has(code)) return code;
     }
-    return `Robux${Date.now() % 100000}`;
+    return `${nanoid(8).replaceAll("-", "").replaceAll("_", "")} Chuyen tien`;
 }
 
 // ── Public payment API ─────────────────────────────────────────────────────────

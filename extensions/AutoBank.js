@@ -274,7 +274,7 @@ class AutoBank {
                 },
                 {
                     name: "user",
-                    value: `<@${entry.context?._userId}> \`${entry.context?._userId}\``,
+                    value: `<@${entry.context?.userId}> \`${entry.context?.userId}\``,
                 },
                 {
                     name: "Custom ID",

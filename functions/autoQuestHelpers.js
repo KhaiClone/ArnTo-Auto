@@ -22,10 +22,10 @@ const orderLogRegistry = new Map();
 // ── Order log ──────────────────────────────────────────────────────────────────
 
 async function sendOrderLog(client, userId, accountId, username, quests) {
-    if (!client.configs.settings.orderLogChannelId) return;
+    if (!client.configs.settings.questOrderLogChannelId) return;
     try {
         const channel = await client.channels.fetch(
-            client.configs.settings.orderLogChannelId,
+            client.configs.settings.questOrderLogChannelId,
         );
         if (!channel?.isTextBased?.()) return;
         const footerText = `QUEST | Tạo lúc ${new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour12: false })}`;
@@ -39,11 +39,6 @@ async function sendOrderLog(client, userId, accountId, username, quests) {
                     name: "📋 Số lượng",
                     value: `**${quests.length}** quest`,
                     inline: true,
-                },
-                {
-                    name: "🏷️ Ticket",
-                    value: client.configs.settings.orderLogTicketLabel || "—",
-                    inline: false,
                 },
             ],
             footer: { text: footerText },
@@ -65,7 +60,7 @@ async function editOrderLog(
     username,
     completedNames,
 ) {
-    if (!client.configs.settings.orderLogChannelId) return;
+    if (!client.configs.settings.questOrderLogChannelId) return;
     const key = `${userId}:${accountId}`;
     const entry =
         orderLogRegistry.get(key) ||
@@ -73,7 +68,7 @@ async function editOrderLog(
     if (!entry) return;
     try {
         const channel = await client.channels.fetch(
-            client.configs.settings.orderLogChannelId,
+            client.configs.settings.questOrderLogChannelId,
         );
         if (!channel?.isTextBased?.()) return;
         const msg = await channel.messages.fetch(entry.messageId);
@@ -88,11 +83,6 @@ async function editOrderLog(
                     value: `**${completedNames.length}** quest`,
                     inline: true,
                 },
-                {
-                    name: "🏷️ Ticket",
-                    value: client.configs.settings.orderLogTicketLabel || "—",
-                    inline: false,
-                },
             ],
             footer: { text: entry.footerText },
             timestamp: true,
@@ -106,7 +96,7 @@ async function editOrderLog(
 }
 
 async function cancelOrderLog(client, userId, accountId, reason) {
-    if (!client.configs.settings.orderLogChannelId) return;
+    if (!client.configs.settings.questOrderLogChannelId) return;
     const key = `${userId}:${accountId}`;
     const entry =
         orderLogRegistry.get(key) ||
@@ -114,7 +104,7 @@ async function cancelOrderLog(client, userId, accountId, reason) {
     if (!entry) return;
     try {
         const channel = await client.channels.fetch(
-            client.configs.settings.orderLogChannelId,
+            client.configs.settings.questOrderLogChannelId,
         );
         if (!channel?.isTextBased?.()) return;
         const msg = await channel.messages.fetch(entry.messageId);

@@ -92,11 +92,24 @@ module.exports = {
             "hs_payment",
             async (client, entry) => {
                 const {
-                    runBadgeChange,
                     markHsPaymentPaid,
-                } = require("../../../events/discord/interaction/autoHypeSquad");
+                    runBadgeChange,
+                } = require("../../../extensions/AutoHypeSquad");
                 await markHsPaymentPaid(client, entry.context.paymentId);
                 await runBadgeChange(client, entry.context);
+            },
+        );
+
+        // Register recovery handler for Robux payments
+        client.autoBank.registerMissedHandler(
+            "rb_payment",
+            async (client, entry) => {
+                const {
+                    markRobuxPaymentPaid,
+                    handleRobuxPaid,
+                } = require("../../../extensions/AutoRobux");
+                await markRobuxPaymentPaid(client, entry.context.paymentId);
+                await handleRobuxPaid(client, entry.context);
             },
         );
 

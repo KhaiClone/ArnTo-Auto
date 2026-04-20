@@ -268,6 +268,15 @@ class AutoBank {
             color: colors[status] || 0x99aab5,
             fields: [
                 {
+                    name: "type handle",
+                    value: `\`${entry.context?._handler}\``,
+                    inline: true,
+                },
+                {
+                    name: "user",
+                    value: `<@${entry.context?._userId}> \`${entry.context?._userId}\``,
+                },
+                {
                     name: "Custom ID",
                     value: `\`${entry.customId}\``,
                     inline: true,
@@ -278,11 +287,6 @@ class AutoBank {
                     inline: true,
                 },
                 { name: "Status", value: status, inline: true },
-                {
-                    name: "Context",
-                    value: `\`\`\`json\n${JSON.stringify(entry.context, null, 2)}\`\`\``,
-                    inline: false,
-                },
             ],
             timestamp: new Date().toISOString(),
             footer: { text: "AutoBank" },

@@ -23,6 +23,8 @@ module.exports = {
     // ── Discord channels ───────────────────────────────────────────────────────
     vietqrChannelId: process.env.VIETQR_CHANNEL_ID || "",
     logWebhookUrl: process.env.LOG_WEBHOOK_URL || "",
-    orderLogChannelId: process.env.ORDER_LOG_CHANNEL_ID || "",
-    orderLogTicketLabel: process.env.ORDER_LOG_TICKET_LABEL || "",
+    questOrderLogChannelId: process.env.QUEST_ORDER_LOG_CHANNEL_ID || "",
+    hypeSquadOrderLogChannelId:
+        process.env.HYPESQUAD_ORDER_LOG_CHANNEL_ID || "",
+    robuxOrderLogChannelId: process.env.ROBUX_ORDER_LOG_CHANNEL_ID || "",
 };

@@ -235,9 +235,14 @@ async function sendHsOrderLog(
 
         const footerText = `HYPESQUAD | Tạo lúc ${new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour12: false })}`;
         const embed = client.embed("", {
-            title: "🏅 Đơn HypeSquad",
+            title: "🎖️ Đơn HypeSquad",
             color: 0x5865f2,
             fields: [
+                {
+                    name: "📦 Mã đơn",
+                    value: `\`${paymentId}\``,
+                    inline: false,
+                },
                 { name: "👤 Khách hàng", value: `<@${userId}>`, inline: true },
                 {
                     name: "🎖️ Badge",
@@ -289,6 +294,41 @@ async function editHsOrderLog(client, paymentId, userId, houseName, success) {
         _orderLogRegistry.delete(paymentId);
     } catch (e) {
         console.warn(`[AutoHypeSquad] editHsOrderLog error: ${e.message}`);
+    }
+}
+
+async function cancelHsOrderLog(client, paymentId) {
+    if (!client.configs.settings.hypeSquadOrderLogChannelId) return;
+    const entry = _orderLogRegistry.get(paymentId);
+    if (!entry) return;
+    try {
+        const channel = await client.channels.fetch(
+            client.configs.settings.hypeSquadOrderLogChannelId,
+        );
+        if (!channel?.isTextBased?.()) return;
+        const msg = await channel.messages.fetch(entry.messageId);
+        const embed = client.embed("", {
+            title: "🎖️ Đơn HypeSquad",
+            color: 0x95a5a6,
+            fields: [
+                {
+                    name: "📦 Mã đơn",
+                    value: `\`${paymentId}\``,
+                    inline: false,
+                },
+                {
+                    name: "📋 Trạng thái",
+                    value: "🚫 Đã hủy bởi khách / Hết hạn",
+                    inline: true,
+                },
+            ],
+            footer: { text: entry.footerText },
+            timestamp: true,
+        });
+        await msg.edit({ embeds: [embed] });
+        _orderLogRegistry.delete(paymentId);
+    } catch (e) {
+        console.warn(`[AutoHypeSquad] cancelHsOrderLog error: ${e.message}`);
     }
 }
 
@@ -360,6 +400,7 @@ module.exports = {
     runBadgeChange,
     sendHsOrderLog,
     editHsOrderLog,
+    cancelHsOrderLog,
     buildHsPaymentEmbed,
     buildHsCancelRow,
 };

@@ -17,6 +17,7 @@ const {
     HOUSES,
     createHsPayment,
     cancelHsPayment,
+    cancelHsOrderLog,
     getOpenHsPayment,
     getHsPaymentById,
     sendHsOrderLog,
@@ -132,6 +133,7 @@ async function _handleButton(client, interaction) {
 
         await interaction.deferUpdate();
         await cancelHsPayment(client, paymentId);
+        await cancelHsOrderLog(client, paymentId);
 
         const user = await client.users.fetch(payment.userId).catch(() => null);
         if (user)

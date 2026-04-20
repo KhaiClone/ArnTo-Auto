@@ -29,6 +29,7 @@ const {
 const {
     buildPaymentEmbed,
     buildPaymentActionRow,
+    cancelOrderLog,
 } = require("../../../functions/autoQuestHelpers");
 
 module.exports = {
@@ -191,6 +192,7 @@ async function _handleButton(client, interaction) {
         await interaction.deferUpdate();
         await cancelPayment(client, paymentId);
         await removeActivationByPaymentId(client, paymentId);
+        await cancelOrderLog(client, payment.userId, payment.accountId, "🚫 Đã hủy bởi khách / Hết hạn");
 
         const user = await client.users.fetch(payment.userId).catch(() => null);
         if (user) {

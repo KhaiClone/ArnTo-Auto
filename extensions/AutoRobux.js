@@ -583,6 +583,11 @@ async function sendRobuxOrderLog(
             title: "🎮 Đơn Robux",
             color: 0xe74c3c,
             fields: [
+                {
+                    name: "📦 Mã đơn (Queue)",
+                    value: `\`${paymentId}\``,
+                    inline: false,
+                },
                 { name: "👤 Khách hàng", value: `<@${userId}>`, inline: true },
                 {
                     name: "💎 Số Robux",
@@ -678,6 +683,41 @@ async function editRobuxOrderLog(
     }
 }
 
+async function cancelRobuxOrderLog(client, paymentId) {
+    if (!client.configs.settings.robuxOrderLogChannelId) return;
+    const entry = _orderLogRegistry.get(paymentId);
+    if (!entry) return;
+    try {
+        const channel = await client.channels.fetch(
+            client.configs.settings.robuxOrderLogChannelId,
+        );
+        if (!channel?.isTextBased?.()) return;
+        const msg = await channel.messages.fetch(entry.messageId);
+        const embed = client.embed("", {
+            title: "🎮 Đơn Robux",
+            color: 0x95a5a6,
+            fields: [
+                {
+                    name: "📦 Mã đơn (Queue)",
+                    value: `\`${paymentId}\``,
+                    inline: false,
+                },
+                {
+                    name: "📋 Trạng thái",
+                    value: "🚫 Đã hủy bởi khách / Hết hạn",
+                    inline: true,
+                },
+            ],
+            footer: { text: entry.footerText },
+            timestamp: true,
+        });
+        await msg.edit({ embeds: [embed] });
+        _orderLogRegistry.delete(paymentId);
+    } catch (e) {
+        console.warn(`[AutoRobux] cancelRobuxOrderLog error: ${e.message}`);
+    }
+}
+
 // ── UI helpers ─────────────────────────────────────────────────────────────────
 
 function buildRobuxPaymentEmbed(client, payment, note) {
@@ -761,6 +801,7 @@ module.exports = {
     handleRobuxPaid,
     sendRobuxOrderLog,
     editRobuxOrderLog,
+    cancelRobuxOrderLog,
     buildRobuxPaymentEmbed,
     buildRobuxCancelRow,
 };

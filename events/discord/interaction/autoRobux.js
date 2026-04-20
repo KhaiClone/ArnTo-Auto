@@ -16,6 +16,7 @@ const {
     ROBUX_PACKAGES,
     createRobuxPayment,
     cancelRobuxPayment,
+    cancelRobuxOrderLog,
     getOpenRobuxPayment,
     getRobuxPaymentById,
     sendRobuxOrderLog,
@@ -90,6 +91,7 @@ async function _handleButton(client, interaction) {
 
         await interaction.deferUpdate();
         await cancelRobuxPayment(client, paymentId);
+        await cancelRobuxOrderLog(client, paymentId);
 
         const user = await client.users.fetch(payment.userId).catch(() => null);
         if (user)

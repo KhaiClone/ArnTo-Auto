@@ -657,7 +657,8 @@ async function editRobuxOrderLog(
             timestamp: true,
         });
         await msg.edit({ embeds: [embed] });
-        _orderLogRegistry.delete(paymentId);
+        // Do NOT delete the registry entry here — completeOrder / failOrder
+        // still need it to perform their final edits on this message.
     } catch (e) {
         console.warn(`[AutoRobux] editRobuxOrderLog error: ${e.message}`);
     }

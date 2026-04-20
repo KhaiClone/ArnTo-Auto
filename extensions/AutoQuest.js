@@ -265,10 +265,12 @@ class QuestAutocompleter {
         for (const q of unaccepted) {
             try {
                 for (let i = 1; i <= 3; i++) {
-                    const res = await this.api.post(
-                        `/quests/${q.id}/enroll`,
-                        {},
-                    );
+                    const res = await this.api.post(`/quests/${q.id}/enroll`, {
+                        location: 11,
+                        is_targeted: false,
+                        metadata_raw: null,
+                        metadata_sealed: null,
+                    });
 
                     _throwIfUnauthorized(res, "Enroll quest thất bại");
                     if (res.status === 429) {

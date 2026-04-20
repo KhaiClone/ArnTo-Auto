@@ -42,15 +42,10 @@ module.exports = {
                 [
                     packageList,
                     "",
-                    "",
                     "<:warning:1487512261793808586> **Lưu Ý**",
-                    "",
                     "- Đây là robux gamepass đã tính thuế.",
                     "- Nick phải trên 7 ngày và có skin bất kì.",
                     "- Mua bằng link gamepass, mỗi link cài cố định 358 <:robux:1456493708382830735> (hướng dẫn: <#1456496321413386461>)",
-                    "",
-                    "",
-                    "**Có thắc mắc vui lòng liên hệ trực tiếp với shop qua** <#1246028759597846650>",
                 ].join("\n"),
             )
             .addFields(

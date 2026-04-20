@@ -12,13 +12,23 @@ module.exports = {
                 .setName("order_id")
                 .setDescription("Mã đơn Robux (VD: RBxxxxxxxx)")
                 .setRequired(true),
+        )
+        .addIntegerOption((o) =>
+            o
+                .setName("refund_amount")
+                .setDescription(
+                    "Số tiền hoàn trả (VNĐ). Mặc định: toàn bộ tiền đơn.",
+                )
+                .setRequired(false)
+                .setMinValue(0),
         ),
 
     async execute(client, interaction) {
         const paymentId = interaction.options
             .getString("order_id", true)
             .trim();
-        const result = await failOrder(client, paymentId);
+        const refundAmount = interaction.options.getInteger("refund_amount");
+        const result = await failOrder(client, paymentId, refundAmount);
 
         if (!result.ok) {
             return interaction.editReply({

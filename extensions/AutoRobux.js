@@ -348,7 +348,7 @@ async function completeOrder(client, paymentId) {
 /**
  * Admin marks order as failed. Removes from queue, generates refund code, DMs buyer.
  */
-async function failOrder(client, paymentId) {
+async function failOrder(client, paymentId, refundAmount) {
     const entry = await _removeFromQueue(client, paymentId);
     if (!entry)
         return { ok: false, reason: "Không tìm thấy đơn trong hàng chờ." };
@@ -367,12 +367,16 @@ async function failOrder(client, paymentId) {
     if (!refundCode) refundCode = _generateRefundCode();
 
     // Save refund record
+    const resolvedRefundAmount =
+        refundAmount != null && !isNaN(refundAmount)
+            ? Number(refundAmount)
+            : entry.price;
     refunds.push({
         code: refundCode,
         paymentId,
         userId: entry.userId,
         robux: entry.robux,
-        price: entry.price,
+        price: resolvedRefundAmount,
         accountName: entry.accountName,
         createdAt: Date.now(),
         used: false,
@@ -623,6 +627,11 @@ async function editRobuxOrderLog(
             title: "🎮 Đơn Robux",
             color: 0xf39c12,
             fields: [
+                {
+                    name: "📦 Mã đơn (Queue)",
+                    value: `\`${paymentId}\``,
+                    inline: false,
+                },
                 {
                     name: "💎 Số Robux",
                     value: `**${robux.toLocaleString()} Robux**`,

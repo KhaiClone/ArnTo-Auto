@@ -135,7 +135,7 @@ async function _handleSelectMenu(client, interaction) {
     const sessionId = Math.random().toString(36).slice(2, 12);
     sessionCache.set(sessionId, { robux: pkg.robux, price: pkg.price });
     setTimeout(() => sessionCache.delete(sessionId), 15 * 60 * 1000);
-
+    await interaction.deferUpdate();
     return interaction.showModal(_buildGamepassModal(sessionId, pkg));
 }
 

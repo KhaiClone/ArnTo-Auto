@@ -250,38 +250,113 @@ module.exports = {
             },
         );
 
-        // ── Restore accounts from DB ───────────────────────────────────────────
-        const totalRestored = await restoreAccounts(client);
-
         // ── Recover missed payments (bot was offline) ──────────────────────────
         const { paid, expired } = await client.autoBank.recover();
 
         for (const entry of paid) {
             try {
+                const handler = entry.context?._handler;
                 const { paymentId, userId } = entry.context;
 
-                const paidPayment = await markPaymentAsPaid(client, paymentId);
+                // ── AutoQuest ──────────────────────────────────────────────
+                if (handler === "quest_payment") {
+                    const paidPayment = await markPaymentAsPaid(
+                        client,
+                        paymentId,
+                    );
+                    const user = await client.users
+                        .fetch(userId)
+                        .catch(() => null);
+                    if (user)
+                        await user
+                            .send({
+                                embeds: [
+                                    client.embed(
+                                        [
+                                            `Mã đơn: \`${paymentId}\``,
+                                            `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
+                                            "Bot phát hiện thanh toán khi khởi động lại. Đã mở chạy quest đã chọn.",
+                                        ].join("\n"),
+                                        {
+                                            title: "Đã xác nhận thanh toán (khôi phục)",
+                                            color: 0x57f287,
+                                        },
+                                    ),
+                                ],
+                            })
+                            .catch(() => null);
+                    if (paidPayment)
+                        await unlockPaymentIfPaid(client, paidPayment).catch(
+                            () => {},
+                        );
 
-                const user = await client.users.fetch(userId).catch(() => null);
-                if (user)
-                    await user.send({
-                        embeds: [
-                            client.embed(
-                                [
-                                    `Mã đơn: \`${paymentId}\``,
-                                    `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
-                                    "Bot phát hiện thanh toán khi khởi động lại. Đã mở chạy quest đã chọn.",
-                                ].join("\n"),
-                                {
-                                    title: "Đã xác nhận thanh toán (khôi phục)",
-                                    color: 0x57f287,
-                                },
-                            ),
-                        ],
-                    });
-                if (paidPayment) {
-                    await unlockPaymentIfPaid(client, paidPayment).catch(
-                        (e) => {},
+                // ── AutoHypeSquad ──────────────────────────────────────────
+                } else if (handler === "hs_payment") {
+                    const {
+                        markHsPaymentPaid,
+                        runBadgeChange,
+                    } = require("../../../extensions/AutoHypeSquad");
+                    const paid = await markHsPaymentPaid(client, paymentId);
+                    if (paid) {
+                        const user = await client.users
+                            .fetch(userId)
+                            .catch(() => null);
+                        if (user)
+                            await user
+                                .send({
+                                    embeds: [
+                                        client.embed(
+                                            [
+                                                `Mã đơn: \`${paymentId}\``,
+                                                `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
+                                                "Bot phát hiện thanh toán khi khởi động lại. Đang tiến hành đổi badge...",
+                                            ].join("\n"),
+                                            {
+                                                title: "Đã xác nhận thanh toán (khôi phục)",
+                                                color: 0x57f287,
+                                            },
+                                        ),
+                                    ],
+                                })
+                                .catch(() => null);
+                        await runBadgeChange(client, entry.context);
+                    }
+
+                // ── AutoRobux ──────────────────────────────────────────────
+                } else if (handler === "rb_payment") {
+                    const {
+                        markRobuxPaymentPaid,
+                        handleRobuxPaid,
+                    } = require("../../../extensions/AutoRobux");
+                    const paid = await markRobuxPaymentPaid(client, paymentId);
+                    if (paid) {
+                        const user = await client.users
+                            .fetch(userId)
+                            .catch(() => null);
+                        if (user)
+                            await user
+                                .send({
+                                    embeds: [
+                                        client.embed(
+                                            [
+                                                `Mã đơn: \`${paymentId}\``,
+                                                `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
+                                                "Bot phát hiện thanh toán khi khởi động lại. Admin sẽ xử lý đơn sớm nhất.",
+                                            ].join("\n"),
+                                            {
+                                                title: "Đã xác nhận thanh toán (khôi phục)",
+                                                color: 0x57f287,
+                                            },
+                                        ),
+                                    ],
+                                })
+                                .catch(() => null);
+                        await handleRobuxPaid(client, entry.context);
+                    }
+
+                } else {
+                    console.warn(
+                        `[ready] Unknown paid handler: ${handler} (paymentId: ${paymentId})`,
                     );
                 }
             } catch (e) {
@@ -291,25 +366,78 @@ module.exports = {
 
         for (const entry of expired) {
             try {
+                const handler = entry.context?._handler;
+                const { paymentId, userId } = entry.context;
                 const user = await client.users
-                    .fetch(entry.context.userId)
+                    .fetch(userId)
                     .catch(() => null);
-                if (user)
-                    await user.send({
-                        embeds: [
-                            client.embed(
-                                [
-                                    `Mã đơn: \`${entry.context.paymentId}\``,
-                                    `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
-                                    "QR đã hết hạn. Hãy chọn lại quest để tạo QR mới.",
-                                ].join("\n"),
-                                {
-                                    title: "QR thanh toán đã hết hạn",
-                                    color: 0xfee75c,
-                                },
-                            ),
-                        ],
-                    });
+                if (!user) continue;
+
+                // ── AutoQuest ──────────────────────────────────────────────
+                if (handler === "quest_payment") {
+                    await user
+                        .send({
+                            embeds: [
+                                client.embed(
+                                    [
+                                        `Mã đơn: \`${paymentId}\``,
+                                        `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
+                                        "QR đã hết hạn. Hãy chọn lại quest để tạo QR mới.",
+                                    ].join("\n"),
+                                    {
+                                        title: "QR thanh toán đã hết hạn",
+                                        color: 0xfee75c,
+                                    },
+                                ),
+                            ],
+                        })
+                        .catch(() => null);
+
+                // ── AutoHypeSquad ──────────────────────────────────────────
+                } else if (handler === "hs_payment") {
+                    await user
+                        .send({
+                            embeds: [
+                                client.embed(
+                                    [
+                                        `Mã đơn: \`${paymentId}\``,
+                                        `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
+                                        "QR HypeSquad đã hết hạn. Hãy tạo đơn mới.",
+                                    ].join("\n"),
+                                    {
+                                        title: "QR thanh toán đã hết hạn",
+                                        color: 0xfee75c,
+                                    },
+                                ),
+                            ],
+                        })
+                        .catch(() => null);
+
+                // ── AutoRobux ──────────────────────────────────────────────
+                } else if (handler === "rb_payment") {
+                    await user
+                        .send({
+                            embeds: [
+                                client.embed(
+                                    [
+                                        `Mã đơn: \`${paymentId}\``,
+                                        `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
+                                        "QR Robux đã hết hạn. Hãy tạo đơn mới.",
+                                    ].join("\n"),
+                                    {
+                                        title: "QR thanh toán đã hết hạn",
+                                        color: 0xfee75c,
+                                    },
+                                ),
+                            ],
+                        })
+                        .catch(() => null);
+
+                } else {
+                    console.warn(
+                        `[ready] Unknown expired handler: ${handler} (paymentId: ${paymentId})`,
+                    );
+                }
             } catch (e) {
                 console.warn(
                     `[ready] DM expired recovery failed: ${e.message}`,

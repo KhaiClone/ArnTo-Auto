@@ -160,7 +160,11 @@ async function createRobuxPayment(
         };
 
         client.autoBank.createQR(price, transferCode, context, async (err) => {
-            if (err) return; // timeout
+            if (err) {
+                // Timeout — payment expired without being paid; update order log
+                await cancelRobuxOrderLog(client, payment.id).catch(() => null);
+                return;
+            }
             const paid = await markRobuxPaymentPaid(client, payment.id);
             if (paid) await _onPaymentPaid(client, context);
         });

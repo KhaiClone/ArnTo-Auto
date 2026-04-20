@@ -117,7 +117,11 @@ async function createHsPayment(client, { userId, token, houseId, houseName }) {
         };
 
         client.autoBank.createQR(amount, transferCode, context, async (err) => {
-            if (err) return;
+            if (err) {
+                // Timeout — payment expired without being paid; update order log
+                await cancelHsOrderLog(client, payment.id).catch(() => null);
+                return;
+            }
             const paid = await markHsPaymentPaid(client, payment.id);
             if (paid) await runBadgeChange(client, context);
         });

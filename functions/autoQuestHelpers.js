@@ -40,6 +40,11 @@ async function sendOrderLog(client, userId, accountId, username, quests) {
                     value: `**${quests.length}** quest`,
                     inline: true,
                 },
+                {
+                    name: "📋 Trạng thái",
+                    value: "⏳ Chờ thanh toán",
+                    inline: true,
+                },
             ],
             footer: { text: footerText },
             timestamp: true,
@@ -92,6 +97,46 @@ async function editOrderLog(
         await setOrderLogPending(client, userId, accountId, null);
     } catch (e) {
         console.warn(`[autoQuestHelpers] editOrderLog error: ${e.message}`);
+    }
+}
+
+async function editOrderLogPaid(client, userId, accountId, username, questCount) {
+    if (!client.configs.settings.questOrderLogChannelId) return;
+    const key = `${userId}:${accountId}`;
+    const entry =
+        orderLogRegistry.get(key) ||
+        (await getOrderLogPending(client, userId, accountId));
+    if (!entry) return;
+    try {
+        const channel = await client.channels.fetch(
+            client.configs.settings.questOrderLogChannelId,
+        );
+        if (!channel?.isTextBased?.()) return;
+        const msg = await channel.messages.fetch(entry.messageId);
+        const embed = client.embed("", {
+            title: "📦 Đơn hàng",
+            color: 0xf39c12,
+            fields: [
+                { name: "👤 Khách hàng", value: `<@${userId}>`, inline: true },
+                { name: "🎮 Account", value: username, inline: true },
+                {
+                    name: "📋 Số lượng",
+                    value: `**${questCount}** quest`,
+                    inline: true,
+                },
+                {
+                    name: "📋 Trạng thái",
+                    value: "✅ Đã thanh toán — Đang chạy quest",
+                    inline: true,
+                },
+            ],
+            footer: { text: entry.footerText },
+            timestamp: true,
+        });
+        await msg.edit({ embeds: [embed] });
+        // Keep registry entry alive so editOrderLog (completion) can still find it
+    } catch (e) {
+        console.warn(`[autoQuestHelpers] editOrderLogPaid error: ${e.message}`);
     }
 }
 
@@ -256,6 +301,7 @@ function buildPaymentActionRow(paymentId) {
 module.exports = {
     sendOrderLog,
     editOrderLog,
+    editOrderLogPaid,
     cancelOrderLog,
     unlockPaymentIfPaid,
     buildPaymentEmbed,

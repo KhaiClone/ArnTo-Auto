@@ -1437,14 +1437,37 @@ async function createQuestPayment(client, { userId, accountId, questIds }) {
         };
 
         client.autoBank.createQR(amount, transferCode, context, async (err) => {
-            if (err) return; // timeout — expireStalePayments handles DB cleanup
+            if (err) {
+                // Timeout — payment expired without being paid; update order log
+                const {
+                    cancelOrderLog,
+                } = require("../functions/autoQuestHelpers");
+                await cancelOrderLog(
+                    client,
+                    userId,
+                    accountId,
+                    "🚫 Đã hủy / Hết hạn thanh toán",
+                ).catch(() => null);
+                return;
+            }
             const paidPayment = await _markPaid(client, payment.id);
             if (!paidPayment) return;
 
-            // Unlock quest run
+            // Update order log → paid / processing
             const {
                 unlockPaymentIfPaid,
+                editOrderLogPaid,
             } = require("../functions/autoQuestHelpers");
+            const runningEntry = getRunningMap(userId).get(accountId);
+            await editOrderLogPaid(
+                client,
+                userId,
+                accountId,
+                runningEntry?.username ?? "",
+                selectedQuestIds.length,
+            ).catch(() => null);
+
+            // Unlock quest run
             await unlockPaymentIfPaid(client, paidPayment).catch((e) =>
                 console.warn(`[autoQuest] unlock error: ${e.message}`),
             );

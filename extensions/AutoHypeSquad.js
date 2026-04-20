@@ -178,7 +178,7 @@ async function runBadgeChange(client, context) {
     const house = HOUSES.find((h) => h.id === houseId);
 
     // Edit order log to completed
-    await editHsOrderLog(client, paymentId, houseName, result.success);
+    await editHsOrderLog(client, paymentId, userId, houseName, result.success);
 
     const user = await client.users.fetch(userId).catch(() => null);
     if (!user) return;
@@ -261,7 +261,7 @@ async function sendHsOrderLog(
     }
 }
 
-async function editHsOrderLog(client, paymentId, houseName, success) {
+async function editHsOrderLog(client, paymentId, userId, houseName, success) {
     if (!client.configs.settings.hypeSquadOrderLogChannelId) return;
     const entry = _orderLogRegistry.get(paymentId);
     if (!entry) return;

@@ -59,23 +59,6 @@ module.exports = {
 async function _handleButton(client, interaction) {
     const { customId } = interaction;
 
-    // "Mua Robux" button on the panel
-    if (customId === "rb:open_menu") {
-        // Show robux package select menu
-        
-
-        return interaction.reply({
-            ephemeral: true,
-            embeds: [
-                client.embed("Chọn gói Robux bạn muốn mua:", {
-                    title: "🎮 Mua Robux",
-                    color: 0xe74c3c,
-                }),
-            ],
-            components: [new ActionRowBuilder().addComponents(menu)],
-        });
-    }
-
     // "Hủy đơn" button
     if (customId.startsWith("rb:cancel_payment:")) {
         const paymentId = customId.split(":")[2];

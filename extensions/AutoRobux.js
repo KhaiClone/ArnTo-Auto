@@ -26,6 +26,7 @@ const _orderLogRegistry = new Map();
 
 const RB_QUEUE_DB = "robux_queue"; // paid orders waiting for admin
 const RB_REFUND_DB = "robux_refunds"; // refund codes for failed orders
+const RB_QUEUE_MSG_DB = "robux_queue_msg"; // persisted { channelId, messageId } for the live queue embed
 // In-memory queue message: { channelId, messageId } for the live queue embed
 let _queueMessageRef = null;
 
@@ -501,6 +502,11 @@ async function updateQueueMessage(client) {
         const queue = await _readQueue(client);
         const embed = _buildQueueEmbed(client, queue);
 
+        // Restore from DB if in-memory ref was lost (e.g. after restart)
+        if (!_queueMessageRef) {
+            _queueMessageRef = (await client.db.get(RB_QUEUE_MSG_DB)) ?? null;
+        }
+
         if (_queueMessageRef) {
             // Try to edit existing message
             try {
@@ -510,13 +516,16 @@ async function updateQueueMessage(client) {
                 await msg.edit({ embeds: [embed] });
                 return;
             } catch {
-                _queueMessageRef = null; // message was deleted, create new one
+                // Message was deleted — clear both in-memory and DB refs
+                _queueMessageRef = null;
+                await client.db.delete(RB_QUEUE_MSG_DB).catch(() => null);
             }
         }
 
-        // Send new queue message and pin it
+        // Send new queue message, pin it, and persist the ref
         const msg = await channel.send({ embeds: [embed] });
         _queueMessageRef = { channelId: channel.id, messageId: msg.id };
+        await client.db.set(RB_QUEUE_MSG_DB, _queueMessageRef);
         await msg.pin().catch(() => null);
     } catch (e) {
         console.warn(`[AutoRobux] updateQueueMessage error: ${e.message}`);

@@ -70,7 +70,7 @@ async function _generateUniqueCode(client) {
 
 async function createRobuxPayment(
     client,
-    { userId, robux, price, gamepaxLink },
+    { userId, robux, price, gamepassLinks, accountName },
 ) {
     const transferCode = await _generateUniqueCode(client);
 
@@ -80,7 +80,8 @@ async function createRobuxPayment(
         userId,
         robux,
         price,
-        gamepaxLink,
+        gamepassLinks,
+        accountName,
         transferCode,
         status: "pending",
         createdAt: _now(),
@@ -98,7 +99,8 @@ async function createRobuxPayment(
             userId,
             robux,
             price,
-            gamepaxLink,
+            gamepassLinks,
+            accountName,
             transferCode,
         };
 
@@ -159,10 +161,10 @@ async function getRobuxPaymentById(client, paymentId) {
 // ── On payment paid ────────────────────────────────────────────────────────────
 
 async function _onPaymentPaid(client, context) {
-    const { paymentId, userId, robux, gamepaxLink } = context;
+    const { paymentId, userId, robux, gamepassLinks, accountName } = context;
 
     // Edit order log to show pending admin action
-    await editRobuxOrderLog(client, paymentId, robux, gamepaxLink);
+    await editRobuxOrderLog(client, paymentId, robux, gamepassLink);
 
     // DM user
     const user = await client.users.fetch(userId).catch(() => null);
@@ -174,7 +176,9 @@ async function _onPaymentPaid(client, context) {
                         [
                             `Mã đơn: \`${paymentId}\``,
                             `Số Robux: **${robux.toLocaleString()} Robux**`,
-                            `Link Gamepass: ${gamepaxLink}`,
+                            `Tên tài khoản: ${accountName}`,
+                            `Link Gamepass:`,
+                            `${gamepassLinks.join("\n")}`,
                             "✅ Đã xác nhận thanh toán! Admin sẽ xử lý đơn của bạn sớm nhất.",
                         ].join("\n"),
                         {
@@ -201,7 +205,7 @@ async function sendRobuxOrderLog(
     userId,
     robux,
     price,
-    gamepaxLink,
+    gamepassLink,
 ) {
     if (!client.configs.settings.robuxOrderLogChannelId) return;
     try {
@@ -226,7 +230,11 @@ async function sendRobuxOrderLog(
                     value: `**${price.toLocaleString("vi-VN")}đ**`,
                     inline: true,
                 },
-                { name: "🔗 Link Gamepass", value: gamepaxLink, inline: false },
+                {
+                    name: "🔗 Link Gamepass",
+                    value: gamepassLink,
+                    inline: false,
+                },
                 {
                     name: "📋 Trạng thái",
                     value: "⏳ Chờ thanh toán",
@@ -244,7 +252,7 @@ async function sendRobuxOrderLog(
     }
 }
 
-async function editRobuxOrderLog(client, paymentId, robux, gamepaxLink) {
+async function editRobuxOrderLog(client, paymentId, robux, gamepassLink) {
     if (!client.configs.settings.robuxOrderLogChannelId) return;
     const entry = _orderLogRegistry.get(paymentId);
     if (!entry) return;
@@ -263,7 +271,11 @@ async function editRobuxOrderLog(client, paymentId, robux, gamepaxLink) {
                     value: `**${robux.toLocaleString()} Robux**`,
                     inline: true,
                 },
-                { name: "🔗 Link Gamepass", value: gamepaxLink, inline: false },
+                {
+                    name: "🔗 Link Gamepass",
+                    value: gamepassLink,
+                    inline: false,
+                },
                 {
                     name: "📋 Trạng thái",
                     value: "✅ Đã thanh toán — Chờ admin xử lý",
@@ -302,7 +314,7 @@ function buildRobuxPaymentEmbed(client, payment, note) {
             },
             {
                 name: "Link Gamepass",
-                value: payment.gamepaxLink,
+                value: payment.gamepassLink,
                 inline: false,
             },
             {

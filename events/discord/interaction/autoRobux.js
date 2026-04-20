@@ -160,24 +160,34 @@ async function _handleModal(client, interaction) {
     }
     sessionCache.delete(sessionId);
 
-    const gamepaxLink = interaction.fields
-        .getTextInputValue("gamepass_link")
+    const accountName = interaction.fields
+        .getTextInputValue("account_name")
         .trim();
 
-    // Basic URL validation
-    if (
-        !gamepaxLink.startsWith("https://www.roblox.com/") &&
-        !gamepaxLink.startsWith("https://roblox.com/")
-    ) {
-        await interaction.deferReply({ ephemeral: true });
-        return interaction.editReply({
-            embeds: [
-                client.embed(
-                    "Link Gamepass không hợp lệ. Vui lòng nhập đúng link từ Roblox.",
-                    { title: "Link không hợp lệ" },
-                ),
-            ],
-        });
+    const gamepassLinkCount = Math.min(session.robux / 250, 4);
+    const gamepassLinks = [];
+    for (let i = 1; i <= gamepassLinkCount; i++) {
+        const link = interaction.fields
+            .getTextInputValue(`gamepass_link_${i}`)
+            .trim();
+
+        // Basic URL validation
+        if (
+            !link.startsWith("https://www.roblox.com/") &&
+            !link.startsWith("https://roblox.com/")
+        ) {
+            await interaction.deferReply({ ephemeral: true });
+            return interaction.editReply({
+                embeds: [
+                    client.embed(
+                        `Link Gamepass #${i} không hợp lệ. Vui lòng nhập đúng link từ Roblox.`,
+                        { title: "Link không hợp lệ" },
+                    ),
+                ],
+            });
+        }
+
+        gamepassLinks.push(link);
     }
 
     await interaction.deferReply({ ephemeral: true });
@@ -201,7 +211,8 @@ async function _handleModal(client, interaction) {
         userId: interaction.user.id,
         robux: session.robux,
         price: session.price,
-        gamepaxLink,
+        accountName,
+        gamepassLinks,
     });
 
     // Send order log
@@ -211,7 +222,8 @@ async function _handleModal(client, interaction) {
         interaction.user.id,
         session.robux,
         session.price,
-        gamepaxLink,
+        accountName,
+        gamepassLinks,
     );
 
     return interaction.editReply({
@@ -229,19 +241,40 @@ async function _handleModal(client, interaction) {
 // ── UI helpers ─────────────────────────────────────────────────────────────────
 
 function _buildGamepassModal(sessionId, pkg) {
-    return new ModalBuilder()
-        .setCustomId(`rb:gamepass_modal:${sessionId}`)
-        .setTitle(
-            `Mua ${pkg.robux.toLocaleString()} Robux — ${pkg.price.toLocaleString("vi-VN")}đ`,
-        )
-        .addComponents(
+    // 1 gamepass input per 250 Robux, capped at 4 (pkg.robux max = 1000)
+    const linkCount = Math.min(pkg.robux / 250, 4);
+
+    const gamepaxRows = [];
+    for (let i = 1; i <= linkCount; i++) {
+        gamepaxRows.push(
             new ActionRowBuilder().addComponents(
                 new TextInputBuilder()
-                    .setCustomId("gamepass_link")
-                    .setLabel("Link Gamepass Roblox của bạn")
+                    .setCustomId(`gamepass_link_${i}`)
+                    .setLabel(
+                        linkCount === 1
+                            ? "Link Gamepass Roblox của bạn"
+                            : `Link Gamepass #${i} (250 Robux)`,
+                    )
                     .setPlaceholder("https://www.roblox.com/game-pass/...")
                     .setStyle(TextInputStyle.Short)
                     .setRequired(true),
             ),
         );
+    }
+
+    const accountRow = new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+            .setCustomId("account_name")
+            .setLabel("Tên tài khoản Roblox của bạn")
+            .setPlaceholder("Nhập username Roblox...")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true),
+    );
+
+    return new ModalBuilder()
+        .setCustomId(`rb:gamepass_modal:${sessionId}`)
+        .setTitle(
+            `Mua ${pkg.robux.toLocaleString()} Robux — ${pkg.price.toLocaleString("vi-VN")}đ`,
+        )
+        .addComponents(...gamepaxRows, accountRow);
 }

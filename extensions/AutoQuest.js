@@ -199,6 +199,42 @@ class QuestAutocompleter {
     constructor(api) {
         this.api = api;
         this.completedIds = new Set();
+        this._cachedChannelId = null;
+    }
+
+    async _getValidChannelId() {
+        if (this._cachedChannelId) return this._cachedChannelId;
+        try {
+            const dmRes = await this.api.get("/users/@me/channels");
+            if (
+                dmRes.status === 200 &&
+                Array.isArray(dmRes.data) &&
+                dmRes.data.length > 0
+            ) {
+                this._cachedChannelId = dmRes.data[0].id;
+                return this._cachedChannelId;
+            }
+        } catch {}
+        try {
+            const guildRes = await this.api.get("/users/@me/guilds");
+            if (guildRes.status === 200 && Array.isArray(guildRes.data)) {
+                for (const guild of guildRes.data) {
+                    try {
+                        const chRes = await this.api.get(
+                            `/guilds/${guild.id}/channels`,
+                        );
+                        if (chRes.status === 200 && Array.isArray(chRes.data)) {
+                            const vc = chRes.data.find((c) => c.type === 2); // GUILD_VOICE
+                            if (vc) {
+                                this._cachedChannelId = vc.id;
+                                return this._cachedChannelId;
+                            }
+                        }
+                    } catch {}
+                }
+            }
+        } catch {}
+        return "1"; // fallback an toàn hơn "0"
     }
 
     async fetchQuests() {
@@ -229,12 +265,11 @@ class QuestAutocompleter {
         for (const q of unaccepted) {
             try {
                 for (let i = 1; i <= 3; i++) {
-                    const res = await this.api.post(`/quests/${q.id}/enroll`, {
-                        location: 11,
-                        is_targeted: false,
-                        metadata_raw: null,
-                        metadata_sealed: null,
-                    });
+                    const res = await this.api.post(
+                        `/quests/${q.id}/enroll`,
+                        {},
+                    );
+
                     _throwIfUnauthorized(res, "Enroll quest thất bại");
                     if (res.status === 429) {
                         await sleep((res.data?.retry_after ?? 5) + 1);
@@ -314,11 +349,12 @@ class QuestAutocompleter {
             taskType = _getTaskType(quest),
             needed = _getSecondsNeeded(quest);
         let done = _getSecondsDone(quest);
-        const pid = Math.floor(Math.random() * 29000) + 1000;
+        const channelId = await this._getValidChannelId();
+        const streamKey = `call:${channelId}:1`;
         while (done < needed) {
             try {
                 const res = await this.api.post(`/quests/${qid}/heartbeat`, {
-                    stream_key: `call:0:${pid}`,
+                    stream_key: streamKey,
                     terminal: false,
                 });
                 _throwIfUnauthorized(res, "Heartbeat thất bại");
@@ -336,7 +372,7 @@ class QuestAutocompleter {
         }
         try {
             const res = await this.api.post(`/quests/${qid}/heartbeat`, {
-                stream_key: `call:0:${pid}`,
+                stream_key: streamKey,
                 terminal: true,
             });
             _throwIfUnauthorized(res, "Heartbeat terminal thất bại");
@@ -349,10 +385,12 @@ class QuestAutocompleter {
         const qid = quest.id,
             needed = _getSecondsNeeded(quest);
         let done = _getSecondsDone(quest);
+        const channelId = await this._getValidChannelId();
+        const streamKey = `call:${channelId}:1`;
         while (done < needed) {
             try {
                 const res = await this.api.post(`/quests/${qid}/heartbeat`, {
-                    stream_key: "call:0:1",
+                    stream_key: streamKey,
                     terminal: false,
                 });
                 _throwIfUnauthorized(res, "Activity heartbeat thất bại");
@@ -370,7 +408,7 @@ class QuestAutocompleter {
         }
         try {
             const res = await this.api.post(`/quests/${qid}/heartbeat`, {
-                stream_key: "call:0:1",
+                stream_key: streamKey,
                 terminal: true,
             });
             _throwIfUnauthorized(res, "Activity terminal thất bại");

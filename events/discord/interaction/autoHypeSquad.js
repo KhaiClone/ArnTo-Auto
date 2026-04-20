@@ -24,8 +24,43 @@ const {
     buildHsCancelRow,
 } = require("../../../extensions/AutoHypeSquad");
 
-// In-memory token cache: sessionId → token (avoids customId length limits)
-const tokenCache = new Map();
+// DB key for persistent token sessions (survives restarts)
+const HS_TOKEN_SESSIONS_DB = "hs_token_sessions";
+const HS_TOKEN_SESSION_TTL = 15 * 60 * 1000; // 15 minutes
+
+/** Read all active (non-expired) token sessions from DB */
+async function _readTokenSessions(client) {
+    return (await client.db.get(HS_TOKEN_SESSIONS_DB)) ?? [];
+}
+
+/** Persist token sessions to DB */
+async function _saveTokenSessions(client, list) {
+    await client.db.set(HS_TOKEN_SESSIONS_DB, list);
+}
+
+/** Store a token session, purging any already-expired sessions in the same pass */
+async function _setTokenSession(client, sessionId, token) {
+    const now = Date.now();
+    const list = (await _readTokenSessions(client)).filter(
+        (s) => s.expiresAt > now,
+    );
+    list.push({ sessionId, token, expiresAt: now + HS_TOKEN_SESSION_TTL });
+    await _saveTokenSessions(client, list);
+}
+
+/** Retrieve and immediately delete a token session (one-shot use) */
+async function _popTokenSession(client, sessionId) {
+    const now = Date.now();
+    const list = await _readTokenSessions(client);
+    const idx = list.findIndex(
+        (s) => s.sessionId === sessionId && s.expiresAt > now,
+    );
+    if (idx < 0) return null;
+    const token = list[idx].token;
+    list.splice(idx, 1);
+    await _saveTokenSessions(client, list);
+    return token;
+}
 
 module.exports = {
     name: "interactionCreate",
@@ -120,7 +155,7 @@ async function _handleSelectMenu(client, interaction) {
     if (!interaction.customId.startsWith("hs:select:")) return;
 
     const sessionId = interaction.customId.split(":")[2];
-    const token = tokenCache.get(sessionId);
+    const token = await _popTokenSession(client, sessionId);
 
     if (!token) {
         return interaction.update({
@@ -133,7 +168,6 @@ async function _handleSelectMenu(client, interaction) {
             components: [],
         });
     }
-    tokenCache.delete(sessionId);
 
     const houseId = parseInt(interaction.values[0]);
     const house = HOUSES.find((h) => h.id === houseId);
@@ -201,8 +235,7 @@ async function _handleModal(client, interaction) {
     }
 
     const sessionId = Math.random().toString(36).slice(2, 12);
-    tokenCache.set(sessionId, token);
-    setTimeout(() => tokenCache.delete(sessionId), 15 * 60 * 1000);
+    await _setTokenSession(client, sessionId, token);
 
     const menu = new StringSelectMenuBuilder()
         .setCustomId(`hs:select:${sessionId}`)

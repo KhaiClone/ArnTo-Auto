@@ -71,7 +71,7 @@ module.exports = {
                 "https://logos-world.net/wp-content/uploads/2020/10/Roblox-Logo-2018-present.jpg",
             );
 
-        await interaction.channel.send({ embeds: [embed], components: [row] });
+        await interaction.channel.send({ embeds: [embed], components: [menu] });
         await interaction.editReply({
             content: "✅ Đã gửi panel Robux vào kênh này.",
             ephemeral: true,

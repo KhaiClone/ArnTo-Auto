@@ -12,7 +12,7 @@ module.exports = {
         .setName("panel-setup")
         .setDescription("Set up the bot management panel")
         .setDefaultMemberPermissions(8), // Admin only
-    async execute(interaction, client) {
+    async execute(client, interaction) {
         if (!client.autoPanel?.isConfigured) {
             return interaction.followUp({
                 content:

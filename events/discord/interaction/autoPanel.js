@@ -31,7 +31,6 @@ module.exports = {
             await interaction.deferReply({ ephemeral: true });
 
             const bots = await client.autoPanel.fetchBots(interaction.user.id);
-            console.log(bots);
             if (!bots || bots.length === 0) {
                 return interaction.editReply({
                     content: "You do not have any bots.",

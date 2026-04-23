@@ -29,10 +29,12 @@ class AutoPanel {
     async fetchBots(buyerID) {
         if (!this.isConfigured) return [];
         try {
-            const res = await axios.get(`${this.apiUrl}/api/external/bots`, {
-                params: { buyerID },
-                headers: this._getHeaders(),
-            });
+            const res = await axios.get(
+                `${this.apiUrl}/api/external/bots?buyerID=${buyerID}`,
+                {
+                    headers: this._getHeaders(),
+                },
+            );
             return res.data;
         } catch (error) {
             console.error("[AutoPanel] Error fetching bots:", error.message);

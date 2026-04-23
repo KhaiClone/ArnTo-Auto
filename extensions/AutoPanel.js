@@ -9,7 +9,9 @@ class AutoPanel {
         if (this.apiUrl && this.apiKey) {
             this._registerRecoveryHandler();
         } else {
-            console.warn("[AutoPanel] PANEL_API_URL or PANEL_API_KEY is not set. Panel integration will be disabled.");
+            console.warn(
+                "[AutoPanel] PANEL_API_URL or PANEL_API_KEY is not set. Panel integration will be disabled.",
+            );
         }
     }
 
@@ -43,11 +45,14 @@ class AutoPanel {
             const res = await axios.post(
                 `${this.apiUrl}/api/external/bots/${botId}/action`,
                 { action },
-                { headers: this._getHeaders() }
+                { headers: this._getHeaders() },
             );
             return res.data;
         } catch (error) {
-            console.error(`[AutoPanel] Error performing action ${action} on bot ${botId}:`, error.message);
+            console.error(
+                `[AutoPanel] Error performing action ${action} on bot ${botId}:`,
+                error.message,
+            );
             throw error;
         }
     }
@@ -57,11 +62,14 @@ class AutoPanel {
             const res = await axios.post(
                 `${this.apiUrl}/api/external/bots/${botId}/extend`,
                 { months },
-                { headers: this._getHeaders() }
+                { headers: this._getHeaders() },
             );
             return res.data;
         } catch (error) {
-            console.error(`[AutoPanel] Error extending bot ${botId}:`, error.message);
+            console.error(
+                `[AutoPanel] Error extending bot ${botId}:`,
+                error.message,
+            );
             throw error;
         }
     }
@@ -71,11 +79,14 @@ class AutoPanel {
             const res = await axios.post(
                 `${this.apiUrl}/api/external/bots/${botId}/upgrade`,
                 { additionalRam },
-                { headers: this._getHeaders() }
+                { headers: this._getHeaders() },
             );
             return res.data;
         } catch (error) {
-            console.error(`[AutoPanel] Error upgrading bot ${botId}:`, error.message);
+            console.error(
+                `[AutoPanel] Error upgrading bot ${botId}:`,
+                error.message,
+            );
             throw error;
         }
     }
@@ -87,25 +98,44 @@ class AutoPanel {
     _registerRecoveryHandler() {
         if (!this.client.autoBank) return;
 
-        this.client.autoBank.registerMissedHandler("panel_payment", async (client, entry) => {
-            const { context } = entry;
-            if (!context) return;
+        this.client.autoBank.registerMissedHandler(
+            "panel_payment",
+            async (client, entry) => {
+                const { context } = entry;
+                if (!context) return;
 
-            try {
-                if (context.type === "extend") {
-                    await this.extendBot(context.botId, context.value);
-                    console.log(`[AutoPanel] Recovered payment for bot ${context.botId} (extended ${context.value} months)`);
-                    this._notifyUser(context.userId, `✅ Payment received! Your bot has been extended by **${context.value}** months.`);
-                } else if (context.type === "upgrade") {
-                    await this.upgradeBot(context.botId, context.value);
-                    console.log(`[AutoPanel] Recovered payment for bot ${context.botId} (upgraded ${context.value} MB RAM)`);
-                    this._notifyUser(context.userId, `✅ Payment received! Your bot's RAM has been upgraded by **${context.value}** MB.`);
+                try {
+                    if (context.type === "extend") {
+                        await this.extendBot(context.botId, context.value);
+                        console.log(
+                            `[AutoPanel] Recovered payment for bot ${context.botId} (extended ${context.value} months)`,
+                        );
+                        this._notifyUser(
+                            context.userId,
+                            `✅ Payment received! Your bot has been extended by **${context.value}** months.`,
+                        );
+                    } else if (context.type === "upgrade") {
+                        await this.upgradeBot(context.botId, context.value);
+                        console.log(
+                            `[AutoPanel] Recovered payment for bot ${context.botId} (upgraded ${context.value} MB RAM)`,
+                        );
+                        this._notifyUser(
+                            context.userId,
+                            `✅ Payment received! Your bot's RAM has been upgraded by **${context.value}** MB.`,
+                        );
+                    }
+                } catch (error) {
+                    console.error(
+                        "[AutoPanel] Recovery failed:",
+                        error.message,
+                    );
+                    this._notifyUser(
+                        context.userId,
+                        `❌ Payment received, but an error occurred while applying the upgrade. Please contact support. (Bot ID: ${context.botId})`,
+                    );
                 }
-            } catch (error) {
-                console.error("[AutoPanel] Recovery failed:", error.message);
-                this._notifyUser(context.userId, `❌ Payment received, but an error occurred while applying the upgrade. Please contact support. (Bot ID: ${context.botId})`);
-            }
-        });
+            },
+        );
     }
 
     async _notifyUser(userId, message) {

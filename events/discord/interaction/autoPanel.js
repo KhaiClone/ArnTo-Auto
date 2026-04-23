@@ -10,6 +10,7 @@ const {
     AttachmentBuilder,
 } = require("discord.js");
 const crypto = require("crypto");
+const { nanoid } = require("nanoid");
 
 const generateVietQR = (client, amount, transferCode) => {
     const s = client.configs.settings;
@@ -216,7 +217,7 @@ module.exports = {
             }
 
             // Create pending payment in AutoBank
-            const transferCode = `PN${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+            const transferCode = `${nanoid(8).replaceAll("-", "").replaceAll("_", "")} Chuyen tien`;
             const expireAt = Date.now() + 10 * 60 * 1000; // 10 minutes
 
             const pendingData = {

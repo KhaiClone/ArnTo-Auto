@@ -114,7 +114,7 @@ module.exports = {
 
                 const input = new TextInputBuilder()
                     .setCustomId("additionalRam")
-                    .setLabel("Additional RAM (divisible by 64, e.g. 64, 128)")
+                    .setLabel("Additional RAM (e.g. 64, 128, 192, ...)")
                     .setStyle(TextInputStyle.Short)
                     .setRequired(true)
                     .setPlaceholder("64");

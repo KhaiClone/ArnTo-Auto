@@ -18,7 +18,7 @@ const generateVietQR = (client, amount, transferCode) => {
 
 module.exports = {
     name: "interactionCreate",
-    async execute(interaction, client) {
+    async execute(client, interaction) {
         if (!client.autoPanel?.isConfigured) return;
 
         // ── 1. Buttons (Manage, Extend, Upgrade) ────────────────────────────────

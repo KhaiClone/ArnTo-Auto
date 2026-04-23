@@ -232,7 +232,7 @@ module.exports = {
                 },
             };
 
-            await client.db.insertOne("autobank_pending", pendingData);
+            await client.db.create("autobank_pending", pendingData);
 
             client.autoBank.createQR(
                 amount,

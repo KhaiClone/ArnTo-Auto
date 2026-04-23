@@ -46,13 +46,15 @@ module.exports = {
         console.log(`Username: ${client.user.username}`);
         console.log(`Client ID: ${client.user.id}`);
 
-        // ── Init AutoBank ──────────────────────────────────────────────────────
+        // ── Init AutoBank & AutoPanel ──────────────────────────────────────────
         const s = client.configs.settings;
         client.autoBank = new AutoBank(
             client,
             s.vietqrChannelId,
             s.logWebhookUrl,
         );
+        const AutoPanel = require("../../../extensions/AutoPanel");
+        client.autoPanel = new AutoPanel(client);
 
         // Register recovery handler for quest payments
         // Called when a payment arrives after bot restart (in-memory callback is gone)
@@ -360,6 +362,11 @@ module.exports = {
                         await handleRobuxPaid(client, entry.context);
                     }
 
+                // ── AutoPanel ──────────────────────────────────────────────
+                } else if (handler === "panel_payment") {
+                    // Handled automatically by the registerMissedHandler in AutoPanel
+                    // But we can leave a log here if needed
+                    console.log(`[ready] Recovered panel_payment for bot: ${entry.context.botId}`);
                 } else {
                     console.warn(
                         `[ready] Unknown paid handler: ${handler} (paymentId: ${paymentId})`,

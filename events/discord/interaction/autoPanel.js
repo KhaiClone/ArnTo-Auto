@@ -163,7 +163,7 @@ module.exports = {
                         .setEmoji("▶️"),
                     new ButtonBuilder()
                         .setCustomId(`panel_action:restart:${botId}`)
-                        .setLabel("Restart")
+                        .setLabel("Khởi động lại")
                         .setStyle(ButtonStyle.Primary)
                         .setEmoji("🔄"),
                     new ButtonBuilder()

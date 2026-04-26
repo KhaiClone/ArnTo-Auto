@@ -114,7 +114,7 @@ class AutoPanel {
                         );
                         this._notifyUser(
                             context.userId,
-                            `✅ Payment received! Your bot has been extended by **${context.value}** months.`,
+                            `✅ Đã nhận được thanh toán! Bot của bạn đã được gia hạn thêm **${context.value}** tháng.`,
                         );
                     } else if (context.type === "upgrade") {
                         await this.upgradeBot(context.botId, context.value);
@@ -123,7 +123,7 @@ class AutoPanel {
                         );
                         this._notifyUser(
                             context.userId,
-                            `✅ Payment received! Your bot's RAM has been upgraded by **${context.value}** MB.`,
+                            `✅ Đã nhận được thanh toán! RAM của bot đã được nâng cấp thêm **${context.value}** MB.`,
                         );
                     }
                 } catch (error) {
@@ -133,7 +133,7 @@ class AutoPanel {
                     );
                     this._notifyUser(
                         context.userId,
-                        `❌ Payment received, but an error occurred while applying the upgrade. Please contact support. (Bot ID: ${context.botId})`,
+                        `❌ Đã nhận được thanh toán, nhưng có lỗi xảy ra khi áp dụng nâng cấp. Vui lòng liên hệ hỗ trợ. (Bot ID: ${context.botId})`,
                     );
                 }
             },

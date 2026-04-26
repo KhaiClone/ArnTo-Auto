@@ -16,65 +16,71 @@ module.exports = {
         if (!client.autoPanel?.isConfigured) {
             return interaction.followUp({
                 content:
-                    "Panel integration is not configured. Please check PANEL_API_URL and PANEL_API_KEY in .env.",
+                    "⚠️ Tích hợp Panel chưa được cấu hình. Vui lòng kiểm tra PANEL_API_URL và PANEL_API_KEY trong file .env.",
             });
         }
 
         const embed = new EmbedBuilder()
-            .setTitle("🎮 QUẢN LÝ BOT CỦA BẠN")
+            .setTitle("🎮 TRUNG TÂM QUẢN LÝ BOT")
             .setDescription(
-                "Sử dụng các nút bên dưới để quản lý, gia hạn, hoặc nâng cấp cấu hình cho bot của bạn.",
+                "Chào mừng bạn đến với hệ thống quản lý bot tự động. Sử dụng các chức năng bên dưới để theo dõi và điều chỉnh bot của bạn một cách nhanh chóng.",
             )
             .setColor(0x5865f2)
+            .setThumbnail(client.user.displayAvatarURL())
             .addFields(
                 {
-                    name: "Manage",
-                    value: "Bật, Tắt, hoặc Khởi động lại bot.",
+                    name: "📊 Trạng thái",
+                    value: "Xem chi tiết thông số và tình trạng hoạt động.",
                     inline: true,
                 },
                 {
-                    name: "Extend",
-                    value: "Gia hạn thời gian hoạt động của bot.",
+                    name: "⚙️ Quản lý",
+                    value: "Bật, Tắt hoặc Khởi động lại bot của bạn.",
                     inline: true,
                 },
                 {
-                    name: "Upgrade",
-                    value: "Nâng cấp dung lượng RAM cho bot.",
+                    name: "⏳ Gia hạn",
+                    value: "Kéo dài thời gian sử dụng bot.",
                     inline: true,
                 },
                 {
-                    name: "Status",
-                    value: "Xem trạng thái chi tiết của bot.",
+                    name: "🚀 Nâng cấp",
+                    value: "Tăng dung lượng RAM để bot chạy mượt hơn.",
                     inline: true,
                 },
-            );
+            )
+            .setFooter({
+                text: "ArnTo Auto Tool • Hệ thống quản lý chuyên nghiệp",
+                iconURL: client.user.displayAvatarURL(),
+            })
+            .setTimestamp();
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId("panel:status")
-                .setLabel("Status")
+                .setLabel("Trạng thái")
                 .setStyle(ButtonStyle.Secondary)
                 .setEmoji("📊"),
             new ButtonBuilder()
                 .setCustomId("panel:manage")
-                .setLabel("Manage")
+                .setLabel("Quản lý")
                 .setStyle(ButtonStyle.Primary)
                 .setEmoji("⚙️"),
             new ButtonBuilder()
                 .setCustomId("panel:extend")
-                .setLabel("Extend")
+                .setLabel("Gia hạn")
                 .setStyle(ButtonStyle.Success)
                 .setEmoji("⏳"),
             new ButtonBuilder()
                 .setCustomId("panel:upgrade")
-                .setLabel("Upgrade")
+                .setLabel("Nâng cấp")
                 .setStyle(ButtonStyle.Danger)
                 .setEmoji("🚀"),
         );
 
         await interaction.channel.send({ embeds: [embed], components: [row] });
         return interaction.followUp({
-            content: "Panel setup successfully.",
+            content: "✅ Đã thiết lập Panel quản lý thành công.",
             ephemeral: true,
         });
     },

@@ -42,9 +42,19 @@ module.exports = {
                     value: "Nâng cấp dung lượng RAM cho bot.",
                     inline: true,
                 },
+                {
+                    name: "Status",
+                    value: "Xem trạng thái chi tiết của bot.",
+                    inline: true,
+                },
             );
 
         const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId("panel:status")
+                .setLabel("Status")
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji("📊"),
             new ButtonBuilder()
                 .setCustomId("panel:manage")
                 .setLabel("Manage")

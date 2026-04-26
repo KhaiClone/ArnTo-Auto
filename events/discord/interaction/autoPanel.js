@@ -17,6 +17,51 @@ const generateVietQR = (client, amount, transferCode) => {
     return `https://img.vietqr.io/image/${s.bankCode}-${s.bankAccount}-qr_only.png?addInfo=${encodeURIComponent(transferCode)}&accountName=${encodeURIComponent(s.bankHolder)}&amount=${amount}`;
 };
 
+const renderBotStatus = (bot) => {
+    const live = bot.live || {};
+    const statusEmoji = live.status === "online" ? "🟢" : "🔴";
+    const statusText = live.status ? live.status.toUpperCase() : "OFFLINE";
+
+    const embed = new EmbedBuilder()
+        .setTitle(`📊 Status: ${bot.name || bot.botID}`)
+        .setColor(live.status === "online" ? 0x2ecc71 : 0xe74c3c)
+        .addFields(
+            {
+                name: "Trạng thái",
+                value: `${statusEmoji} ${statusText}`,
+                inline: true,
+            },
+            {
+                name: "Max Memory",
+                value: `💾 ${bot.maxMemory || "128M"}`,
+                inline: true,
+            },
+            {
+                name: "Khởi động lại",
+                value: `🔄 ${live.restarts || 0} lần`,
+                inline: true,
+            },
+        );
+
+    if (live.uptime) {
+        embed.addFields({
+            name: "Hoạt động từ",
+            value: `<t:${Math.floor(live.uptime / 1000)}:R>`,
+            inline: true,
+        });
+    }
+
+    if (bot.expiresAt) {
+        embed.addFields({
+            name: "Hết hạn",
+            value: `<t:${Math.floor(bot.expiresAt / 1000)}:f> (<t:${Math.floor(bot.expiresAt / 1000)}:R>)`,
+            inline: false,
+        });
+    }
+
+    return embed;
+};
+
 module.exports = {
     name: "interactionCreate",
     async execute(client, interaction) {
@@ -64,8 +109,29 @@ module.exports = {
             const actionType = interaction.customId.split(":")[1];
             const botId = interaction.values[0];
 
+            if (actionType === "status") {
+                const bots = await client.autoPanel.fetchBots(
+                    interaction.user.id,
+                );
+                const bot = bots.find((b) => b._id === botId);
+                if (!bot) {
+                    return interaction.reply({
+                        content: "Bot not found.",
+                        ephemeral: true,
+                    });
+                }
+
+                const embed = renderBotStatus(bot);
+                return interaction.reply({ embeds: [embed], ephemeral: true });
+            }
+
             if (actionType === "manage") {
                 const row = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`panel_action:status:${botId}`)
+                        .setLabel("Status")
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji("📊"),
                     new ButtonBuilder()
                         .setCustomId(`panel_action:start:${botId}`)
                         .setLabel("Start")
@@ -133,6 +199,21 @@ module.exports = {
             interaction.customId.startsWith("panel_action:")
         ) {
             const [, action, botId] = interaction.customId.split(":");
+
+            if (action === "status") {
+                await interaction.deferReply({ ephemeral: true });
+                const bots = await client.autoPanel.fetchBots(
+                    interaction.user.id,
+                );
+                const bot = bots.find((b) => b._id === botId);
+                if (!bot) {
+                    return interaction.editReply({ content: "Bot not found." });
+                }
+
+                const embed = renderBotStatus(bot);
+                return interaction.editReply({ embeds: [embed] });
+            }
+
             await interaction.deferReply({ ephemeral: true });
 
             try {

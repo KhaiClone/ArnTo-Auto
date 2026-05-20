@@ -4,7 +4,6 @@
     "description": "Auto Quest Discord Bot",
     "main": "index.js",
     "scripts": {
-        "preinstall": "npx only-allow pnpm",
         "test": "del json.sqlite && timeout /t 2 >nul && node index.js",
         "start": "node index.js"
     },

@@ -36,7 +36,7 @@ module.exports = {
             const express = require("express");
             const app = express();
             app.get("/", (req, res) => res.send(`Ping: ${client.ws.ping} ms`));
-            app.listen(client.configs.settings.port, "0.0.0.0", () =>
+            app.listen(client.configs.settings.port, () =>
                 console.log(
                     `Server listening on port ${client.configs.settings.port}`,
                 ),

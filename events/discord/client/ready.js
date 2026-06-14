@@ -36,7 +36,7 @@ module.exports = {
             const express = require("express");
             const app = express();
             app.get("/", (req, res) => res.send(`Ping: ${client.ws.ping} ms`));
-            app.listen(client.configs.settings.port, () =>
+            app.listen(client.configs.settings.port, "0.0.0.0", () =>
                 console.log(
                     `Server listening on port ${client.configs.settings.port}`,
                 ),
@@ -254,9 +254,13 @@ module.exports = {
 
         // ── Init Robux queue message ───────────────────────────────────────────
         try {
-            const { updateQueueMessage } = require("../../../extensions/AutoRobux");
+            const {
+                updateQueueMessage,
+            } = require("../../../extensions/AutoRobux");
             await updateQueueMessage(client);
-        } catch (e) { console.warn("[ready] updateQueueMessage error:", e.message); }
+        } catch (e) {
+            console.warn("[ready] updateQueueMessage error:", e.message);
+        }
 
         // ── Recover missed payments (bot was offline) ──────────────────────────
         const { paid, expired } = await client.autoBank.recover();
@@ -298,7 +302,7 @@ module.exports = {
                             () => {},
                         );
 
-                // ── AutoHypeSquad ──────────────────────────────────────────
+                    // ── AutoHypeSquad ──────────────────────────────────────────
                 } else if (handler === "hs_payment") {
                     const {
                         markHsPaymentPaid,
@@ -330,7 +334,7 @@ module.exports = {
                         await runBadgeChange(client, entry.context);
                     }
 
-                // ── AutoRobux ──────────────────────────────────────────────
+                    // ── AutoRobux ──────────────────────────────────────────────
                 } else if (handler === "rb_payment") {
                     const {
                         markRobuxPaymentPaid,
@@ -362,11 +366,13 @@ module.exports = {
                         await handleRobuxPaid(client, entry.context);
                     }
 
-                // ── AutoPanel ──────────────────────────────────────────────
+                    // ── AutoPanel ──────────────────────────────────────────────
                 } else if (handler === "panel_payment") {
                     // Handled automatically by the registerMissedHandler in AutoPanel
                     // But we can leave a log here if needed
-                    console.log(`[ready] Recovered panel_payment for bot: ${entry.context.botId}`);
+                    console.log(
+                        `[ready] Recovered panel_payment for bot: ${entry.context.botId}`,
+                    );
                 } else {
                     console.warn(
                         `[ready] Unknown paid handler: ${handler} (paymentId: ${paymentId})`,
@@ -381,9 +387,7 @@ module.exports = {
             try {
                 const handler = entry.context?._handler;
                 const { paymentId, userId } = entry.context;
-                const user = await client.users
-                    .fetch(userId)
-                    .catch(() => null);
+                const user = await client.users.fetch(userId).catch(() => null);
                 if (!user) continue;
 
                 // ── AutoQuest ──────────────────────────────────────────────
@@ -406,7 +410,7 @@ module.exports = {
                         })
                         .catch(() => null);
 
-                // ── AutoHypeSquad ──────────────────────────────────────────
+                    // ── AutoHypeSquad ──────────────────────────────────────────
                 } else if (handler === "hs_payment") {
                     await user
                         .send({
@@ -426,7 +430,7 @@ module.exports = {
                         })
                         .catch(() => null);
 
-                // ── AutoRobux ──────────────────────────────────────────────
+                    // ── AutoRobux ──────────────────────────────────────────────
                 } else if (handler === "rb_payment") {
                     await user
                         .send({
@@ -445,7 +449,6 @@ module.exports = {
                             ],
                         })
                         .catch(() => null);
-
                 } else {
                     console.warn(
                         `[ready] Unknown expired handler: ${handler} (paymentId: ${paymentId})`,

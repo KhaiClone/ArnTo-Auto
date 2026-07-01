@@ -32,10 +32,40 @@ module.exports = {
         });
         // require("../../../handlers/antiCrash");
 
-        if (process.env.EXPRESS === "true") {
+        if (process.env.EXPRESS === "true" || process.env.DM_API_KEY) {
             const express = require("express");
             const app = express();
+            app.use(express.json({ limit: "1mb" }));
             app.get("/", (req, res) => res.send(`Ping: ${client.ws.ping} ms`));
+
+            // ── DM API ─────────────────────────────────────────────────────────
+            // Panel (or any authorized service) can POST here to deliver a DM
+            // to a buyer. Webhook alerts remain independent.
+            app.post("/api/dm", async (req, res) => {
+                const key = process.env.DM_API_KEY;
+                if (!key) return res.status(503).json({ error: "dm_disabled" });
+                if (req.header("x-api-key") !== key)
+                    return res.status(401).json({ error: "unauthorized" });
+
+                const { buyerID, content, embeds, components } = req.body || {};
+                if (!buyerID || (!content && !embeds))
+                    return res.status(400).json({ error: "invalid_payload" });
+
+                try {
+                    const user = await client.users.fetch(buyerID);
+                    await user.send({ content, embeds, components });
+                    return res.json({ ok: true });
+                } catch (err) {
+                    const code = err?.code;
+                    if (code === 10013)
+                        return res.status(404).json({ error: "user_not_found" });
+                    if (code === 50007)
+                        return res.status(403).json({ error: "dm_closed" });
+                    console.warn(`[DM API] send failed for ${buyerID}: ${err.message}`);
+                    return res.status(500).json({ error: "send_failed" });
+                }
+            });
+
             app.listen(client.configs.settings.port, () =>
                 console.log(
                     `Server listening on port ${client.configs.settings.port}`,

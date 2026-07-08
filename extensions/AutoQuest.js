@@ -14,6 +14,7 @@ const {
     createDecipheriv,
     createHash,
     randomBytes,
+    randomUUID,
 } = require("crypto");
 const normalizeDiscordTokenInput = require("../functions/normalizeDiscordTokenInput");
 const { nanoid } = require("nanoid");
@@ -26,14 +27,21 @@ const AUTO_REMOVE_INACTIVE_MS = 30 * 60 * 1000;
 const API_BASE = "https://discord.com/api/v9";
 const HEARTBEAT_INTERVAL = 20;
 const AUTO_ACCEPT = true;
+// STREAM_ON_DESKTOP is intentionally excluded — Discord requires real screen-share
+// detection for it now, so heartbeat spoofing no longer completes it.
 const SUPPORTED_TASKS = [
     "WATCH_VIDEO",
-    "PLAY_ON_DESKTOP",
-    "STREAM_ON_DESKTOP",
-    "PLAY_ACTIVITY",
     "WATCH_VIDEO_ON_MOBILE",
+    "PLAY_ON_DESKTOP",
+    "PLAY_ON_XBOX",
+    "PLAY_ON_PLAYSTATION",
+    "PLAY_ACTIVITY",
+    "ACHIEVEMENT_IN_ACTIVITY",
 ];
-const C = { RESET: "\x1b[0m", YELLOW: "\x1b[93m", BOLD: "\x1b[1m" };
+const GAME_HEARTBEAT_TASKS = ["PLAY_ON_DESKTOP", "PLAY_ON_XBOX", "PLAY_ON_PLAYSTATION"];
+const DESKTOP_USER_AGENT =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9236 Chrome/138.0.7204.251 Electron/37.6.0 Safari/537.36";
+const ANDROID_USER_AGENT = "Discord-Android/316011;RNA";
 
 const sleep = (s) => new Promise((r) => setTimeout(r, s * 1000));
 
@@ -50,22 +58,25 @@ function _throwIfUnauthorized(res, ctx) {
 }
 
 async function fetchLatestBuildNumber() {
-    const FALLBACK = 504649;
-    const ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+    const FALLBACK = 539951;
     try {
         const res = await axios.get("https://discord.com/app", {
-            headers: { "User-Agent": ua },
+            headers: { "User-Agent": DESKTOP_USER_AGENT },
             timeout: 15000,
         });
         if (res.status !== 200) return FALLBACK;
-        const hashes = [...res.data.matchAll(/\/assets\/([a-f0-9]+)\.js/g)].map(
-            (m) => m[1],
-        );
-        for (const hash of hashes.slice(-5)) {
+        const scripts = [
+            ...new Set(
+                [...res.data.matchAll(/\/assets\/web\.([a-f0-9]+)\.js/g)].map(
+                    (m) => m[0],
+                ),
+            ),
+        ];
+        for (const scriptPath of scripts.slice(0, 5)) {
             try {
                 const ar = await axios.get(
-                    `https://discord.com/assets/${hash}.js`,
-                    { headers: { "User-Agent": ua }, timeout: 15000 },
+                    `https://discord.com${scriptPath}`,
+                    { headers: { "User-Agent": DESKTOP_USER_AGENT }, timeout: 15000 },
                 );
                 const match = ar.data.match(
                     /buildNumber["'\s:]+["'\s]*(\d{5,7})/,
@@ -79,23 +90,52 @@ async function fetchLatestBuildNumber() {
     }
 }
 
-function _makeSuperProperties(buildNumber) {
+function _makeSuperProperties(buildNumber, isAndroid) {
+    if (isAndroid) {
+        return Buffer.from(
+            JSON.stringify({
+                os: "Android",
+                browser: "Discord Android",
+                device: "b0q",
+                system_locale: "en-US",
+                has_client_mods: false,
+                client_version: "316.11 - rn",
+                release_channel: "googleRelease",
+                device_vendor_id: randomUUID(),
+                design_id: 2,
+                browser_user_agent: "",
+                browser_version: "",
+                os_version: "28",
+                client_build_number: 5169,
+                client_event_source: null,
+                client_launch_id: randomUUID(),
+                launch_signature: randomUUID(),
+                client_app_state: "active",
+                client_heartbeat_session_id: randomUUID(),
+            }),
+        ).toString("base64");
+    }
     return Buffer.from(
         JSON.stringify({
             os: "Windows",
             browser: "Discord Client",
             release_channel: "stable",
-            client_version: "1.0.9175",
-            os_version: "10.0.26100",
+            client_version: "1.0.9236",
+            os_version: "10.0.19045",
             os_arch: "x64",
             app_arch: "x64",
             system_locale: "en-US",
-            browser_user_agent:
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36",
-            browser_version: "32.2.7",
+            has_client_mods: false,
+            client_launch_id: randomUUID(),
+            browser_user_agent: DESKTOP_USER_AGENT,
+            browser_version: "37.6.0",
+            os_sdk_version: "19045",
             client_build_number: buildNumber,
-            native_build_number: 59498,
+            native_build_number: 81687,
             client_event_source: null,
+            launch_signature: randomUUID(),
+            client_heartbeat_session_id: randomUUID(),
+            client_app_state: "focused",
         }),
     ).toString("base64");
 }
@@ -103,6 +143,7 @@ function _makeSuperProperties(buildNumber) {
 class DiscordAPI {
     constructor(token, buildNumber) {
         this.token = token;
+        this.buildNumber = buildNumber;
         this.client = axios.create({
             baseURL: API_BASE,
             headers: {
@@ -110,21 +151,35 @@ class DiscordAPI {
                 "Content-Type": "application/json",
                 Accept: "*/*",
                 "Accept-Language": "en-US,en;q=0.9",
-                "User-Agent":
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36",
-                "X-Super-Properties": _makeSuperProperties(buildNumber),
+                "User-Agent": DESKTOP_USER_AGENT,
+                "X-Super-Properties": _makeSuperProperties(buildNumber, false),
                 "X-Discord-Locale": "en-US",
                 "X-Discord-Timezone": "Asia/Ho_Chi_Minh",
+                "X-Debug-Options": "bugReporterEnabled",
                 Origin: "https://discord.com",
                 Referer: "https://discord.com/channels/@me",
             },
         });
     }
-    async get(path) {
-        return this.client.get(path, { validateStatus: () => true });
+    async get(path, config = {}) {
+        return this.client.get(path, { validateStatus: () => true, ...config });
     }
-    async post(path, payload = null) {
-        return this.client.post(path, payload, { validateStatus: () => true });
+    async post(path, payload = null, config = {}) {
+        return this.client.post(path, payload, {
+            validateStatus: () => true,
+            ...config,
+        });
+    }
+    async delete(path, config = {}) {
+        return this.client.delete(path, { validateStatus: () => true, ...config });
+    }
+    // Only the enroll call needs Android identity — used for quests that are
+    // mobile-only (WATCH_VIDEO_ON_MOBILE without a desktop WATCH_VIDEO variant).
+    androidEnrollHeaders() {
+        return {
+            "User-Agent": ANDROID_USER_AGENT,
+            "X-Super-Properties": _makeSuperProperties(this.buildNumber, true),
+        };
     }
 }
 
@@ -193,6 +248,13 @@ function _getSecondsDone(q) {
 }
 function _getEnrolledAt(q) {
     return _getValue(_getUserStatus(q), "enrolledAt", "enrolled_at");
+}
+function _getApplicationId(q) {
+    return (q.config ?? {}).application?.id ?? null;
+}
+function _isMobileOnlyTask(q) {
+    const tc = _getTaskConfig(q);
+    return Boolean(tc?.tasks?.WATCH_VIDEO_ON_MOBILE) && !tc?.tasks?.WATCH_VIDEO;
 }
 
 class QuestAutocompleter {
@@ -264,13 +326,22 @@ class QuestAutocompleter {
         if (!unaccepted.length) return quests;
         for (const q of unaccepted) {
             try {
+                const isAndroid = _isMobileOnlyTask(q);
                 for (let i = 1; i <= 3; i++) {
-                    const res = await this.api.post(`/quests/${q.id}/enroll`, {
-                        location: 11,
-                        is_targeted: false,
-                        metadata_raw: null,
-                        metadata_sealed: null,
-                    });
+                    const res = await this.api.post(
+                        `/quests/${q.id}/enroll`,
+                        {
+                            location: isAndroid ? 12 : 11, // QUEST_HOME_MOBILE : QUEST_HOME_DESKTOP
+                            is_targeted: false,
+                            metadata_sealed: null,
+                            traffic_metadata_raw: q.traffic_metadata_raw ?? null,
+                            traffic_metadata_sealed:
+                                q.traffic_metadata_sealed ?? null,
+                        },
+                        isAndroid
+                            ? { headers: this.api.androidEnrollHeaders() }
+                            : {},
+                    );
 
                     _throwIfUnauthorized(res, "Enroll quest thất bại");
                     if (res.status === 429) {
@@ -293,10 +364,12 @@ class QuestAutocompleter {
         if (!taskType || this.completedIds.has(quest.id)) return;
         if (["WATCH_VIDEO", "WATCH_VIDEO_ON_MOBILE"].includes(taskType))
             await this._completeVideo(quest);
-        else if (["PLAY_ON_DESKTOP", "STREAM_ON_DESKTOP"].includes(taskType))
-            await this._completeHeartbeat(quest);
+        else if (GAME_HEARTBEAT_TASKS.includes(taskType))
+            await this._completeGameHeartbeat(quest, taskType);
         else if (taskType === "PLAY_ACTIVITY")
             await this._completeActivity(quest);
+        else if (taskType === "ACHIEVEMENT_IN_ACTIVITY")
+            await this._completeAchievement(quest);
         this.completedIds.add(quest.id);
     }
 
@@ -346,17 +419,17 @@ class QuestAutocompleter {
         }
     }
 
-    async _completeHeartbeat(quest) {
+    // PLAY_ON_DESKTOP / PLAY_ON_XBOX / PLAY_ON_PLAYSTATION now report progress
+    // via `application_id` heartbeats instead of a fake voice `stream_key`.
+    async _completeGameHeartbeat(quest, taskType) {
         const qid = quest.id,
-            taskType = _getTaskType(quest),
             needed = _getSecondsNeeded(quest);
         let done = _getSecondsDone(quest);
-        const channelId = await this._getValidChannelId();
-        const streamKey = `call:${channelId}:1`;
+        const applicationId = _getApplicationId(quest);
         while (done < needed) {
             try {
                 const res = await this.api.post(`/quests/${qid}/heartbeat`, {
-                    stream_key: streamKey,
+                    application_id: applicationId,
                     terminal: false,
                 });
                 _throwIfUnauthorized(res, "Heartbeat thất bại");
@@ -374,7 +447,7 @@ class QuestAutocompleter {
         }
         try {
             const res = await this.api.post(`/quests/${qid}/heartbeat`, {
-                stream_key: streamKey,
+                application_id: applicationId,
                 terminal: true,
             });
             _throwIfUnauthorized(res, "Heartbeat terminal thất bại");
@@ -414,6 +487,103 @@ class QuestAutocompleter {
                 terminal: true,
             });
             _throwIfUnauthorized(res, "Activity terminal thất bại");
+        } catch (err) {
+            if (err?.invalidToken) throw err;
+        }
+    }
+
+    // ACHIEVEMENT_IN_ACTIVITY quests are completed via the application's
+    // embedded-activity domain (discordsays.com), not the normal Discord API.
+    async _getActivityReferrer(applicationId) {
+        const res = await this.api.post(
+            `/applications/${applicationId}/proxy-tickets`,
+            {},
+        );
+        _throwIfUnauthorized(res, "Lấy proxy ticket thất bại");
+        const referrer = new URL(`https://${applicationId}.discordsays.com/`);
+        referrer.searchParams.set("instance_id", "example-cl-instance");
+        referrer.searchParams.set("platform", "desktop");
+        referrer.searchParams.set(
+            "discord_proxy_ticket",
+            res.data?.ticket ?? "",
+        );
+        return referrer.toString();
+    }
+
+    async _completeAchievement(quest) {
+        const qid = quest.id;
+        const applicationId = _getApplicationId(quest);
+        if (!applicationId) return;
+        const tc = _getTaskConfig(quest);
+        const questTarget = tc?.tasks?.ACHIEVEMENT_IN_ACTIVITY?.target ?? 0;
+        try {
+            const authRes = await this.api.post(
+                `/oauth2/authorize`,
+                {
+                    permissions: "0",
+                    authorize: true,
+                    integration_type: 1,
+                    location_context: {
+                        guild_id: "10000",
+                        channel_id: "10000",
+                        channel_type: 10000,
+                    },
+                },
+                {
+                    params: {
+                        response_type: "code",
+                        client_id: applicationId,
+                        scope: "identify applications.commands applications.entitlements",
+                        state: "",
+                    },
+                },
+            );
+            _throwIfUnauthorized(authRes, "Achievement authorize thất bại");
+            const location = authRes.data?.location;
+            const authCode = location
+                ? new URL(location).searchParams.get("code")
+                : null;
+            if (!authCode) return;
+
+            const activityReferrer =
+                await this._getActivityReferrer(applicationId);
+            const activityHeaders = {
+                "Content-Type": "application/json",
+                "X-Discord-Quest-ID": qid,
+                Referer: activityReferrer,
+                "User-Agent": DESKTOP_USER_AGENT,
+            };
+
+            const authorizeRes = await axios.post(
+                `https://${applicationId}.discordsays.com/.proxy/acf/authorize`,
+                { code: authCode },
+                { headers: activityHeaders, validateStatus: () => true },
+            );
+            const activityToken = authorizeRes.data?.token;
+            if (!activityToken) return;
+
+            await axios.post(
+                `https://${applicationId}.discordsays.com/.proxy/acf/quest/progress`,
+                { progress: questTarget },
+                {
+                    headers: {
+                        ...activityHeaders,
+                        "X-Auth-Token": activityToken,
+                    },
+                    validateStatus: () => true,
+                },
+            );
+
+            const tokensRes = await this.api.get("/oauth2/tokens");
+            if (tokensRes.status === 200 && Array.isArray(tokensRes.data)) {
+                const tokenInfo = tokensRes.data.find(
+                    (t) => t.application?.id === applicationId,
+                );
+                if (tokenInfo)
+                    await this.api
+                        .delete(`/oauth2/tokens/${tokenInfo.id}`)
+                        .catch(() => null);
+            }
         } catch (err) {
             if (err?.invalidToken) throw err;
         }

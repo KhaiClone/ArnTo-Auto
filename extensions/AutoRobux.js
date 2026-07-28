@@ -161,7 +161,9 @@ async function createRobuxPayment(
 
         client.autoBank.createQR(price, transferCode, context, async (err) => {
             if (err) {
-                // Timeout — payment expired without being paid; update order log
+                // Timeout — payment expired without being paid. Remove the pending
+                // record so it is not left dangling in the DB, then update log.
+                await cancelRobuxPayment(client, payment.id).catch(() => null);
                 await cancelRobuxOrderLog(client, payment.id).catch(() => null);
                 return;
             }
@@ -215,6 +217,28 @@ async function getRobuxPaymentById(client, paymentId) {
     return (
         (await _readPayments(client)).find((i) => i.id === paymentId) ?? null
     );
+}
+
+/**
+ * Remove pending Robux payments whose QR window has elapsed. Robux payments are
+ * only cleared on pay/cancel otherwise, so without a sweep expired pending rows
+ * accumulate in the DB forever. Called on startup and on an interval.
+ *
+ * @returns {Promise<Array>} the payments that were expired
+ */
+async function expireStaleRobuxPayments(client) {
+    const current = _now();
+    const list = await _readPayments(client);
+    const expiredNow = [];
+    const nextList = list.filter((item) => {
+        if (item.status === "pending" && Number(item.expiresAt) <= current) {
+            expiredNow.push({ ...item, status: "expired" });
+            return false;
+        }
+        return true;
+    });
+    if (expiredNow.length) await _savePayments(client, nextList);
+    return expiredNow;
 }
 
 // ── On payment paid ────────────────────────────────────────────────────────────
@@ -802,6 +826,7 @@ module.exports = {
     cancelRobuxPayment,
     getOpenRobuxPayment,
     getRobuxPaymentById,
+    expireStaleRobuxPayments,
     handleRobuxPaid,
     sendRobuxOrderLog,
     editRobuxOrderLog,

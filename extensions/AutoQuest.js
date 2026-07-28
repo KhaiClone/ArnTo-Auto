@@ -24,6 +24,9 @@ const { nanoid } = require("nanoid");
 // ══════════════════════════════════════════════════════════════════════════════
 
 const AUTO_REMOVE_INACTIVE_MS = 30 * 60 * 1000;
+// Dead-token records (needsTokenRefresh) are kept this long so the user can
+// re-enter their token, then purged for privacy. See sweepStaleAccounts().
+const REFRESH_RECORD_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const API_BASE = "https://discord.com/api/v9";
 const HEARTBEAT_INTERVAL = 20;
 const AUTO_ACCEPT = true;
@@ -731,6 +734,13 @@ function _buildRefreshRecord(record) {
                 ? record.month
                 : null,
         needsTokenRefresh: true,
+        // Timestamp for when this record entered the "waiting for re-entered token"
+        // state. Used by sweepStaleAccounts() to expire dead-token records after
+        // REFRESH_RECORD_TTL_MS so user data is not kept forever.
+        refreshRequestedAt:
+            typeof record.refreshRequestedAt === "string"
+                ? record.refreshRequestedAt
+                : new Date().toISOString(),
         questBatchNotification: _normalizeQuestBatch(record),
         orderLogPending: _normalizeOrderLogPending(record),
         selectedQuestIds: _normalizeSelectedQuestIds(record),
@@ -1089,14 +1099,6 @@ function _expireAccount(client, userId, accountId) {
     return removeStoredAccount(client, userId, accountId);
 }
 
-function _persistAccountRecord(client, userId, accountId, record) {
-    loadAccounts(client).then((data) => {
-        if (!data[userId]) data[userId] = {};
-        data[userId][accountId] = { ...data[userId][accountId], ...record };
-        saveAccounts(client, data);
-    });
-}
-
 async function setAllowedQuests(client, userId, accountId, questIds) {
     const entry = getRunningMap(userId).get(accountId);
     if (!entry) return false;
@@ -1105,15 +1107,26 @@ async function setAllowedQuests(client, userId, accountId, questIds) {
     );
     const selectedIds = [...entry.allowedQuestIds];
     if (selectedIds.length > 0) {
-        _persistAccountRecord(client, userId, accountId, {
+        // Persist the account record and its selected quest IDs in a single
+        // atomic load→save. The previous code fire-and-forgot _persistAccountRecord
+        // and then awaited setStoredSelectedQuestIds separately, which raced: the
+        // selectedQuestIds write often ran before the record existed and was
+        // dropped, leaving a paid account stored with no selection.
+        const data = await loadAccounts(client);
+        if (!data[userId]) data[userId] = {};
+        data[userId][accountId] = {
+            ...data[userId][accountId],
             token: entry.token,
             username: entry.username,
             addedAt: new Date(entry.startedAt).toISOString(),
             expiresAt: entry.expiresAt,
             month: entry.month,
-        });
+            selectedQuestIds: selectedIds,
+        };
+        await saveAccounts(client, data);
+    } else {
+        await setStoredSelectedQuestIds(client, userId, accountId, selectedIds);
     }
-    await setStoredSelectedQuestIds(client, userId, accountId, selectedIds);
     entry.wakeRequested = true;
     return true;
 }
@@ -1332,7 +1345,12 @@ async function _runLoop(
                                 ? refreshList
                                 : (refreshList?.quests ?? [])
                         ).find((x) => String(x.id) === qid);
-                        return !q || _isCompleted(q);
+                        // Treat a selected quest as done when it is gone, already
+                        // completed, or no longer completable (e.g. expired on
+                        // Discord). Without the last case such a quest is enrolled
+                        // but never completable, so the account never purges and
+                        // lingers in the DB polling forever.
+                        return !q || _isCompleted(q) || !_isCompletable(q);
                     });
                     if (allDone) {
                         _expireAccount(client, userId, accountId);
@@ -1525,6 +1543,103 @@ async function restoreAccounts(client) {
     return total;
 }
 
+/**
+ * Durable cleanup of the `accounts` store. Runs on startup and on an interval.
+ * The in-memory inactivity timer in startAccount() only lives inside the running
+ * process, so anything that slips past it (a dead-token record no one re-entered,
+ * a stored account left idle after a restart) would otherwise stay forever.
+ * A currently-running account is never touched.
+ *
+ * @returns {Promise<Array<{ userId, accountId, username, reason }>>} removed entries
+ */
+async function sweepStaleAccounts(client) {
+    const rawData = await _readAccounts(client);
+    const now = _now();
+    let changed = false;
+    const removed = [];
+
+    for (const [userId, accounts] of Object.entries(rawData)) {
+        if (
+            !accounts ||
+            typeof accounts !== "object" ||
+            Array.isArray(accounts)
+        ) {
+            delete rawData[userId];
+            changed = true;
+            continue;
+        }
+        for (const [accountId, record] of Object.entries(accounts)) {
+            if (
+                !record ||
+                typeof record !== "object" ||
+                Array.isArray(record)
+            ) {
+                delete accounts[accountId];
+                changed = true;
+                continue;
+            }
+
+            // Never remove an account that is actively running.
+            if (getRunningMap(userId).has(accountId)) continue;
+
+            // (a) Dead-token records waiting for the user to re-enter a token.
+            if (_hasRefreshFlag(record)) {
+                if (typeof record.refreshRequestedAt !== "string") {
+                    // Legacy record with no timestamp: start the clock now so it
+                    // still gets the full grace window instead of being nuked.
+                    accounts[accountId] = {
+                        ...record,
+                        refreshRequestedAt: new Date(now).toISOString(),
+                    };
+                    changed = true;
+                    continue;
+                }
+                const flaggedAt = new Date(record.refreshRequestedAt).getTime();
+                if (
+                    Number.isFinite(flaggedAt) &&
+                    now - flaggedAt >= REFRESH_RECORD_TTL_MS
+                ) {
+                    delete accounts[accountId];
+                    changed = true;
+                    removed.push({
+                        userId,
+                        accountId,
+                        username: record.username,
+                        reason: "refresh_ttl",
+                    });
+                }
+                continue;
+            }
+
+            // (b) Stored account that never got a quest selected and has been idle
+            //     past the inactivity window (durable backstop for the RAM timer).
+            if (_normalizeSelectedQuestIds(record).length === 0) {
+                const addedAt = new Date(record.addedAt ?? 0).getTime();
+                if (
+                    Number.isFinite(addedAt) &&
+                    now - addedAt >= AUTO_REMOVE_INACTIVE_MS
+                ) {
+                    delete accounts[accountId];
+                    changed = true;
+                    removed.push({
+                        userId,
+                        accountId,
+                        username: record.username,
+                        reason: "inactive",
+                    });
+                }
+            }
+        }
+        if (Object.keys(accounts).length === 0) {
+            delete rawData[userId];
+            changed = true;
+        }
+    }
+
+    if (changed) await _writeAccounts(client, rawData);
+    return removed;
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  SECTION 4 — PAYMENT LIFECYCLE + AUTOBANK INTEGRATION
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1648,7 +1763,13 @@ async function createQuestPayment(client, { userId, accountId, questIds }) {
 
         client.autoBank.createQR(amount, transferCode, context, async (err) => {
             if (err) {
-                // Timeout — payment expired without being paid; update order log
+                // Timeout — payment expired without being paid. Remove the payment
+                // record and its activation so nothing is left dangling as
+                // "pending" in the DB, then update the order log.
+                await cancelPayment(client, payment.id).catch(() => null);
+                await removeActivationByPaymentId(client, payment.id).catch(
+                    () => null,
+                );
                 const {
                     cancelOrderLog,
                 } = require("../functions/autoQuestHelpers");
@@ -1892,6 +2013,7 @@ module.exports = {
     stopAllAccounts,
     removeStoredAccount,
     restoreAccounts,
+    sweepStaleAccounts,
 
     // Storage
     loadAccounts,

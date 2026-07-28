@@ -9,6 +9,7 @@ const {
     restoreAccounts,
     setAccountNotifier,
     expireStalePayments,
+    sweepStaleAccounts,
     getRecoverablePaidActivations,
     markPaymentAsPaid,
 } = require("../../../extensions/AutoQuest");
@@ -292,6 +293,17 @@ module.exports = {
             console.warn("[ready] updateQueueMessage error:", e.message);
         }
 
+        // ── Restore stored accounts (resume quest runs after restart) ──────────
+        // Runs before the maintenance sweep so restored accounts are in the
+        // running map and are never mistaken for stale/idle entries.
+        try {
+            const restored = await restoreAccounts(client);
+            if (restored)
+                console.log(`[ready] Restored ${restored} account(s).`);
+        } catch (e) {
+            console.warn("[ready] restoreAccounts error:", e.message);
+        }
+
         // ── Recover missed payments (bot was offline) ──────────────────────────
         const { paid, expired } = await client.autoBank.recover();
 
@@ -528,6 +540,47 @@ module.exports = {
                 );
             }
         }
+
+        // ── Periodic maintenance sweep ─────────────────────────────────────────
+        // Startup-only cleanup is not enough: a bot that stays up for days would
+        // never clear expired-pending payments or stale stored accounts. This
+        // interval expires stale payments across all features and prunes stale
+        // accounts (dead-token records past their TTL, idle unselected accounts).
+        const MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+        const runMaintenance = async () => {
+            try {
+                await expireStalePayments(client);
+            } catch (e) {
+                console.warn("[maintenance] quest payments:", e.message);
+            }
+            try {
+                const {
+                    expireStaleRobuxPayments,
+                } = require("../../../extensions/AutoRobux");
+                await expireStaleRobuxPayments(client);
+            } catch (e) {
+                console.warn("[maintenance] robux payments:", e.message);
+            }
+            try {
+                const {
+                    expireStaleHsPayments,
+                } = require("../../../extensions/AutoHypeSquad");
+                await expireStaleHsPayments(client);
+            } catch (e) {
+                console.warn("[maintenance] hypesquad payments:", e.message);
+            }
+            try {
+                const removed = await sweepStaleAccounts(client);
+                if (removed.length)
+                    console.log(
+                        `[maintenance] pruned ${removed.length} stale account(s)`,
+                    );
+            } catch (e) {
+                console.warn("[maintenance] account sweep:", e.message);
+            }
+        };
+        await runMaintenance();
+        setInterval(runMaintenance, MAINTENANCE_INTERVAL_MS);
 
         // ── Backup interval ────────────────────────────────────────────────────
         setInterval(

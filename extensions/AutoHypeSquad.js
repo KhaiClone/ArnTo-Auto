@@ -118,7 +118,9 @@ async function createHsPayment(client, { userId, token, houseId, houseName }) {
 
         client.autoBank.createQR(amount, transferCode, context, async (err) => {
             if (err) {
-                // Timeout — payment expired without being paid; update order log
+                // Timeout — payment expired without being paid. Remove the pending
+                // record so it is not left dangling in the DB, then update log.
+                await cancelHsPayment(client, payment.id).catch(() => null);
                 await cancelHsOrderLog(client, payment.id).catch(() => null);
                 return;
             }
@@ -172,6 +174,28 @@ async function getHsPaymentById(client, paymentId) {
     return (
         (await _readPayments(client)).find((i) => i.id === paymentId) ?? null
     );
+}
+
+/**
+ * Remove pending HypeSquad payments whose QR window has elapsed. Without a sweep
+ * expired pending rows accumulate in the DB forever (they are only cleared on
+ * pay/cancel otherwise). Called on startup and on an interval.
+ *
+ * @returns {Promise<Array>} the payments that were expired
+ */
+async function expireStaleHsPayments(client) {
+    const current = _now();
+    const list = await _readPayments(client);
+    const expiredNow = [];
+    const nextList = list.filter((item) => {
+        if (item.status === "pending" && Number(item.expiresAt) <= current) {
+            expiredNow.push({ ...item, status: "expired" });
+            return false;
+        }
+        return true;
+    });
+    if (expiredNow.length) await _savePayments(client, nextList);
+    return expiredNow;
 }
 
 // ── Badge change ───────────────────────────────────────────────────────────────
@@ -401,6 +425,7 @@ module.exports = {
     cancelHsPayment,
     getOpenHsPayment,
     getHsPaymentById,
+    expireStaleHsPayments,
     runBadgeChange,
     sendHsOrderLog,
     editHsOrderLog,

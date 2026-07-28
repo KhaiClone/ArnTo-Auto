@@ -37,6 +37,7 @@ function _isStaffFree(client, userId) {
 }
 
 const {
+    sendOrderLog,
     buildPaymentEmbed,
     buildPaymentActionRow,
     cancelOrderLog,
@@ -250,6 +251,14 @@ async function _handleSelectMenu(client, interaction) {
             accountId,
             selectedQuestIds,
         );
+        // Create the order log now (marked "Miễn phí (Staff)" via the staffFree flag).
+        await sendOrderLog(
+            client,
+            interaction.user.id,
+            accountId,
+            runningEntry.username,
+            selectedQuestIds,
+        );
         return interaction.update({
             embeds: [
                 client.embed(
@@ -296,6 +305,16 @@ async function _handleSelectMenu(client, interaction) {
         accountId,
         questIds: selectedQuestIds,
     });
+
+    // Create the order log immediately at QR creation ("⏳ Chờ thanh toán"),
+    // consistent with HypeSquad/Robux. It is edited to paid/cancelled later.
+    await sendOrderLog(
+        client,
+        interaction.user.id,
+        accountId,
+        runningEntry.username,
+        selectedQuestIds,
+    );
 
     // Save activation so we can restore it if bot restarts before payment is confirmed
     await upsertPendingActivation(client, {

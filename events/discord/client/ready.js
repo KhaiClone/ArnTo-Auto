@@ -12,10 +12,11 @@ const {
     sweepStaleAccounts,
     getRecoverablePaidActivations,
     markPaymentAsPaid,
+    getRunningMap,
 } = require("../../../extensions/AutoQuest");
 const {
-    sendOrderLog,
     editOrderLog,
+    editOrderLogPaid,
     cancelOrderLog,
     unlockPaymentIfPaid,
 } = require("../../../functions/autoQuestHelpers");
@@ -201,13 +202,21 @@ module.exports = {
                     }
 
                     if (type === "quest_batch_started") {
-                        await sendOrderLog(
-                            client,
-                            userId,
-                            accountId,
-                            username,
-                            quests,
-                        );
+                        // The order log is created at QR creation now. When the run
+                        // actually starts, reflect the paid state — unless this is a
+                        // free staff order (keep its "Miễn phí" status). This also
+                        // covers the restart-recovery path, where the paid callback
+                        // did not run to update the log.
+                        const entry = getRunningMap(userId).get(accountId);
+                        if (!entry?.staffFree) {
+                            await editOrderLogPaid(
+                                client,
+                                userId,
+                                accountId,
+                                username,
+                                quests.length,
+                            );
+                        }
                         return user.send({
                             embeds: [
                                 client.embed(

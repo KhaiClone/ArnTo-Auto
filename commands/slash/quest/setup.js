@@ -4,6 +4,7 @@ const {
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
+    StringSelectMenuBuilder,
     EmbedBuilder,
 } = require("discord.js");
 
@@ -52,22 +53,38 @@ module.exports = {
             "https://cdn.discordapp.com/attachments/1245991899450572912/1495136698206785597/1776538764448.png?ex=69e5260f&is=69e3d48f&hm=daaf336b476311fe623beaa951ade085c33336ef2c403252bd85b93fc586b23b&",
         );
 
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId("quest:enter_token")
-                .setLabel("Nhập token")
-                .setStyle(ButtonStyle.Primary),
-            new ButtonBuilder()
-                .setCustomId("quest:enter_token_monthly")
-                .setLabel("Gia hạn theo tháng")
-                .setStyle(ButtonStyle.Success),
+        const menuRow = new ActionRowBuilder().addComponents(
+            new StringSelectMenuBuilder()
+                .setCustomId("quest:menu")
+                .setPlaceholder("Chọn loại dịch vụ để bắt đầu")
+                .addOptions(
+                    {
+                        label: "Quest lẻ - done nhanh",
+                        value: "single",
+                        description:
+                            "Chọn số quest cần làm, thanh toán theo từng quest.",
+                        emoji: "⚡",
+                    },
+                    {
+                        label: "Quest tháng - bot tự động làm quest",
+                        value: "monthly",
+                        description:
+                            "Trả phí theo tháng, bot tự làm toàn bộ quest theo lịch (Thứ 3 & Thứ 7).",
+                        emoji: "♾️",
+                    },
+                ),
+        );
+        const btnRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId("quest:check_token")
-                .setLabel("Kiểm tra")
-                .setStyle(ButtonStyle.Primary),
+                .setLabel("Kiểm tra trạng thái")
+                .setStyle(ButtonStyle.Secondary),
         );
 
-        await interaction.channel.send({ embeds: [embed], components: [row] });
+        await interaction.channel.send({
+            embeds: [embed],
+            components: [menuRow, btnRow],
+        });
         await interaction.editReply({
             content: "✅ Đã gửi panel vào kênh này.",
             ephemeral: true,

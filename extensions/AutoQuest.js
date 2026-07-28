@@ -2295,6 +2295,56 @@ async function getMonthlyAccounts(client) {
 }
 
 /**
+ * Full status of every account a user has entered (for the "Kiểm tra trạng thái"
+ * panel button). Merges the persisted accounts DB (incl. dead-token records) with
+ * the in-memory running map (incl. fresh not-yet-paid runs).
+ */
+async function getUserAccountsStatus(client, userId) {
+    const raw = await _readAccounts(client);
+    const accounts = raw[userId];
+    const userMap = getRunningMap(userId);
+    const out = [];
+    const seen = new Set();
+
+    const push = (accountId, record, running) => {
+        out.push({
+            accountId,
+            username:
+                (record && record.username) || running?.username || "Unknown",
+            type: _isMonthlyActive(record) ? "monthly" : "single",
+            monthlyExpiresAt: _normalizeMonthlyExpiresAt(record),
+            needsRefresh: _hasRefreshFlag(record),
+            tokenAlive: !_hasRefreshFlag(record),
+            running: !!running,
+            runningQuestCount:
+                running?.allowedQuestIds instanceof Set
+                    ? running.allowedQuestIds.size
+                    : null,
+            completedCount: running?.completedCount ?? 0,
+            startedAt: running?.startedAt ?? null,
+            storedSelectedCount: record
+                ? _normalizeSelectedQuestIds(record).length
+                : 0,
+        });
+    };
+
+    if (accounts && typeof accounts === "object" && !Array.isArray(accounts)) {
+        for (const [accountId, record] of Object.entries(accounts)) {
+            if (!record || typeof record !== "object" || Array.isArray(record))
+                continue;
+            seen.add(accountId);
+            push(accountId, record, userMap.get(accountId));
+        }
+    }
+    // Running accounts not yet persisted (fresh per-quest runs before payment).
+    for (const [accountId, running] of userMap) {
+        if (seen.has(accountId)) continue;
+        push(accountId, {}, running);
+    }
+    return out;
+}
+
+/**
  * Scheduled batch: run through every active subscriber sequentially and complete
  * ALL available quests, DMing the owner per completed quest (via the notifier).
  */
@@ -2429,5 +2479,6 @@ module.exports = {
     activateMonthlySubscription,
     activateMonthlyFromPayment,
     getMonthlyAccounts,
+    getUserAccountsStatus,
     runMonthlyBatch,
 };

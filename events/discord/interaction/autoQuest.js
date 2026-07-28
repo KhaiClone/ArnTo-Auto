@@ -32,6 +32,7 @@ const {
     getMonthlySubscriptionRaw,
     cancelMonthlyPayment,
     activateMonthlySubscription,
+    getUserAccountsStatus,
     buildVietQrUrl,
 } = require("../../../extensions/AutoQuest");
 
@@ -121,35 +122,57 @@ async function _handleButton(client, interaction) {
     }
 
     if (customId === "quest:check_token") {
-        const userMap = getRunningMap(interaction.user.id);
-        if (userMap.size === 0) {
-            return interaction.reply({
-                ephemeral: true,
+        await interaction.deferReply({ ephemeral: true });
+        const list = await getUserAccountsStatus(client, interaction.user.id);
+        if (!list.length) {
+            return interaction.editReply({
                 embeds: [
-                    client.embed("Bạn chưa có account nào đang chạy.", {
-                        title: "Trạng thái",
+                    client.embed("Bạn chưa nhập account nào.", {
+                        title: "Trạng thái tài khoản",
                         color: 0xfee75c,
                     }),
                 ],
             });
         }
-        const fields = [];
-        for (const [accountId, entry] of userMap) {
-            fields.push({
-                name: entry.username,
-                value: [
-                    `ID: \`${accountId}\``,
-                    `Uptime: ${client.funcs.formatUptime(entry.startedAt)}`,
-                    `Quest hoàn thành: ${entry.completedCount}`,
-                ].join("\n"),
+        const rel = (iso) =>
+            `<t:${Math.floor(new Date(iso).getTime() / 1000)}:R>`;
+        const fields = list.slice(0, 25).map((a) => {
+            const lines = [
+                `ID: \`${a.accountId}\``,
+                `Loại: ${a.type === "monthly" ? "♾️ Quest tháng" : "⚡ Quest lẻ"}`,
+                `Token: ${a.tokenAlive ? "✅ Hoạt động" : "⚠️ Cần nhập lại"}`,
+            ];
+            if (a.type === "monthly" && a.monthlyExpiresAt)
+                lines.push(`Hạn: ${rel(a.monthlyExpiresAt)}`);
+            if (a.running) {
+                lines.push(
+                    `Đang chạy: ${a.runningQuestCount ?? "toàn bộ"} quest | Đã xong: ${a.completedCount}`,
+                );
+                if (a.startedAt)
+                    lines.push(
+                        `Uptime: ${client.funcs.formatUptime(a.startedAt)}`,
+                    );
+            } else if (a.type === "monthly") {
+                lines.push("Trạng thái: ⏳ Chờ lịch (Thứ 3 & Thứ 7)");
+            } else if (!a.tokenAlive) {
+                lines.push("Trạng thái: Tạm dừng — chờ nhập lại token");
+            } else {
+                lines.push("Trạng thái: Không chạy");
+            }
+            return {
+                name: a.username,
+                value: lines.join("\n"),
                 inline: true,
-            });
-        }
-        return interaction.reply({
-            ephemeral: true,
+            };
+        });
+        const note =
+            list.length > 25
+                ? `Hiển thị 25/${list.length} account.`
+                : "";
+        return interaction.editReply({
             embeds: [
-                client.embed("", {
-                    title: `Trạng thái — ${userMap.size} account đang chạy`,
+                client.embed(note, {
+                    title: `Trạng thái tài khoản — ${list.length} account`,
                     color: 0x5865f2,
                     fields,
                     timestamp: true,
@@ -283,8 +306,39 @@ async function _handleButton(client, interaction) {
     }
 }
 
+// ── Panel service-type menu ──────────────────────────────────────────────────────
+async function _handleMenuSelect(client, interaction) {
+    const choice = interaction.values?.[0];
+    if (choice === "monthly") {
+        return interaction.showModal(
+            _buildTokenModal(
+                "quest:monthly_token_modal",
+                "Nhập token Discord (gói tháng)",
+            ),
+        );
+    }
+    // "single" (quest lẻ): mirror the fresh-token flow; if the user has a dead-token
+    // account waiting, prompt a re-entry instead.
+    const refreshRecord = await getTokenRefreshRecord(client, interaction.user.id);
+    if (refreshRecord) {
+        return interaction.showModal(
+            _buildTokenModal(
+                `quest:refresh_modal:${refreshRecord.accountId}`,
+                "Nhập lại token Discord",
+            ),
+        );
+    }
+    return interaction.showModal(
+        _buildTokenModal("quest:token_modal", "Nhập token Discord"),
+    );
+}
+
 // ── Select menu handler ────────────────────────────────────────────────────────
 async function _handleSelectMenu(client, interaction) {
+    // Panel service-type menu: route to the matching token flow.
+    if (interaction.customId === "quest:menu")
+        return _handleMenuSelect(client, interaction);
+
     if (!interaction.customId.startsWith("quest:select:")) return;
 
     const accountId = interaction.customId.split(":")[2];

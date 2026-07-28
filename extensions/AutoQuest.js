@@ -1503,6 +1503,21 @@ async function restoreAccounts(client) {
     for (const [userId, accounts] of Object.entries(data)) {
         for (const [accountId, record] of Object.entries(accounts)) {
             try {
+                // Resume quest selection. Prefer explicitly stored selectedQuestIds,
+                // but fall back to an in-progress quest batch (status "started")
+                // whose signature holds the quest IDs that were mid-run when the bot
+                // stopped. Without this, an account whose selection was never
+                // persisted (e.g. an older record from before the setAllowedQuests
+                // race fix) restores but sits idle because its allow-list is empty.
+                let resumeIds = record.selectedQuestIds ?? [];
+                if (
+                    resumeIds.length === 0 &&
+                    record.questBatchNotification?.status === "started"
+                ) {
+                    resumeIds = (record.questBatchNotification.signature ?? "")
+                        .split("|")
+                        .filter(Boolean);
+                }
                 const result = await startAccount(
                     client,
                     userId,
@@ -1512,19 +1527,26 @@ async function restoreAccounts(client) {
                         addedAt: record.addedAt,
                         month: record.month,
                         requireQuestSelection: true,
-                        // Pass stored selected quest IDs so run loop resumes immediately
-                        // without waiting for user to re-select quests
-                        _storedSelectedQuestIds: record.selectedQuestIds ?? [],
+                        // Pass resumed quest IDs so the run loop resumes immediately
+                        // without waiting for the user to re-select quests
+                        _storedSelectedQuestIds: resumeIds,
                     },
                 );
                 if (result.ok) {
                     total++;
-                    // If account had selected quests stored, wake the loop immediately
-                    if ((record.selectedQuestIds ?? []).length > 0) {
+                    // Wake the loop immediately and persist the resumed selection
+                    // back to the DB so it survives the next restart too.
+                    if (resumeIds.length > 0) {
                         const entry = getRunningMap(userId).get(
                             result.accountId,
                         );
                         if (entry) entry.wakeRequested = true;
+                        await setStoredSelectedQuestIds(
+                            client,
+                            userId,
+                            result.accountId,
+                            resumeIds,
+                        ).catch(() => null);
                     }
                 } else if (_isInvalidTokenResult(result))
                     await _removeDeadAccount(

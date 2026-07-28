@@ -18,31 +18,43 @@ module.exports = {
     async execute(client, interaction) {
         const s = client.configs.settings;
         const priceStr = s.questPricePerItem.toLocaleString("vi-VN");
+        const monthlyStr = s.monthlyQuestPrice.toLocaleString("vi-VN");
 
         const embed = new EmbedBuilder()
             .setColor(client.funcs.hexToInt(client.configs.embed.color))
             .setTitle("Auto Quest - Tự động làm nhiệm vụ Discord")
             .setDescription(
                 [
-                    "Nhập token Discord để bot tự lấy quest khả dụng.",
-                    "",
-                    "**Quy trình:**",
-                    "1) Bấm `Nhập token` (cách lấy token: <#1485326007308386556>)",
-                    "2) Chọn quest (có thể chọn nhiều)",
-                    `3) Bot tạo QR thanh toán: **${priceStr}đ/quest**`,
-                    "4) Thanh toán xong bot tự chạy đúng quest đã chọn.",
+                    "Chọn loại dịch vụ trong menu bên dưới để bắt đầu.",
+                    `Cách lấy token: <#1485326007308386556>`,
                 ].join("\n"),
             )
             .addFields(
                 {
-                    name: "⏱ Thời gian chờ QR",
-                    value: "10 phút (quá thời gian sẽ hết hạn).",
-                    inline: true,
+                    name: "⚡ Quest lẻ - done nhanh",
+                    value: [
+                        `Chọn số quest cần làm, trả **${priceStr}đ/quest**.`,
+                        "Bot chạy đúng số quest bạn đã chọn rồi dừng.",
+                    ].join("\n"),
+                    inline: false,
                 },
                 {
-                    name: "🏦 Thanh toán",
-                    value: "Chuyển đúng mã nội dung để hệ thống tự xác nhận.",
-                    inline: true,
+                    name: "♾️ Quest tháng - bot tự động",
+                    value: [
+                        `Trả **${monthlyStr}đ/tháng**, không giới hạn số quest.`,
+                        "Bot tự làm **toàn bộ** quest trên account theo lịch **Thứ 3 & Thứ 7** hằng tuần, xong quest nào báo về DM.",
+                    ].join("\n"),
+                    inline: false,
+                },
+                {
+                    name: "📊 Kiểm tra trạng thái",
+                    value: "Xem tất cả account bạn đã nhập: loại gói, thời hạn, tình trạng token, quest đang chạy.",
+                    inline: false,
+                },
+                {
+                    name: "⏱ Lưu ý thanh toán",
+                    value: "QR có hạn 10 phút. Chuyển **đúng nội dung** để hệ thống tự xác nhận.",
+                    inline: false,
                 },
             );
 

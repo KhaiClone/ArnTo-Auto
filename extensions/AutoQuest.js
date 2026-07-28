@@ -1454,22 +1454,30 @@ async function startAccount(client, userId, token, options = {}) {
         selectionShown,
         wakeRequested: false,
     });
-    setTimeout(async () => {
-        const currentEntry = getRunningMap(userId).get(resolved.accountId);
-        if (!currentEntry) return; // already removed
+    // Inactivity auto-remove is a security feature for a FRESH token entry: if the
+    // user pastes a token and never selects/pays within the window, drop the
+    // in-memory token. It must NOT run for restored/refreshed/already-paid accounts
+    // — those are established accounts, and deleting them here would wrongly wipe a
+    // legitimate account (e.g. a restored account whose quests already finished, so
+    // its allow-list is empty again, looks "never paid" to this check).
+    if (options.autoRemoveIfInactive) {
+        setTimeout(async () => {
+            const currentEntry = getRunningMap(userId).get(resolved.accountId);
+            if (!currentEntry) return; // already removed
 
-        const neverPaid =
-            currentEntry.completedCount === 0 &&
-            currentEntry.allowedQuestIds instanceof Set &&
-            currentEntry.allowedQuestIds.size === 0;
+            const neverPaid =
+                currentEntry.completedCount === 0 &&
+                currentEntry.allowedQuestIds instanceof Set &&
+                currentEntry.allowedQuestIds.size === 0;
 
-        if (neverPaid) {
-            console.log(
-                `[AutoQuest] Auto-removing inactive account: ${resolved.username} (${resolved.accountId})`,
-            );
-            await _expireAccount(client, userId, resolved.accountId);
-        }
-    }, AUTO_REMOVE_INACTIVE_MS);
+            if (neverPaid) {
+                console.log(
+                    `[AutoQuest] Auto-removing inactive account: ${resolved.username} (${resolved.accountId})`,
+                );
+                await _expireAccount(client, userId, resolved.accountId);
+            }
+        }, AUTO_REMOVE_INACTIVE_MS);
+    }
 
     _runLoop(
         client,

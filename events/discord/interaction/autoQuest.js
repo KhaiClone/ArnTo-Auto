@@ -297,6 +297,8 @@ async function _handleModal(client, interaction) {
             forceNotifyQuestBatch: true,
             source: "activate",
             requireQuestSelection: true,
+            // Fresh token entry: drop it if the user never selects/pays in time.
+            autoRemoveIfInactive: true,
         });
 
         if (!result.ok) {

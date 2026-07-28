@@ -28,10 +28,12 @@ async function sendOrderLog(client, userId, accountId, username, quests) {
             client.configs.settings.questOrderLogChannelId,
         );
         if (!channel?.isTextBased?.()) return;
+        const isStaffFree =
+            getRunningMap(userId).get(accountId)?.staffFree === true;
         const footerText = `QUEST | Tạo lúc ${new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour12: false })}`;
         const embed = client.embed("", {
             title: "📦 Đơn hàng",
-            color: 0x5865f2,
+            color: isStaffFree ? 0x9b59b6 : 0x5865f2,
             fields: [
                 { name: "👤 Khách hàng", value: `<@${userId}>`, inline: true },
                 { name: "🎮 Account", value: username, inline: true },
@@ -42,7 +44,9 @@ async function sendOrderLog(client, userId, accountId, username, quests) {
                 },
                 {
                     name: "📋 Trạng thái",
-                    value: "⏳ Chờ thanh toán",
+                    value: isStaffFree
+                        ? "🆓 Miễn phí (Staff) — Đang chạy"
+                        : "⏳ Chờ thanh toán",
                     inline: true,
                 },
             ],

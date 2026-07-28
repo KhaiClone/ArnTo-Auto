@@ -17,6 +17,7 @@ const {
     getSelectableQuests,
     resolveDiscordAccount,
     startAccount,
+    setAllowedQuests,
     cancelPayment,
     createQuestPayment,
     getPaymentById,
@@ -25,6 +26,15 @@ const {
     removeActivationByPaymentId,
     getTokenRefreshRecord,
 } = require("../../../extensions/AutoQuest");
+
+// Owner/dev users run Auto Quest for free — no payment step.
+function _isStaffFree(client, userId) {
+    const s = client.configs.settings;
+    return (
+        (s.ownerUserIds ?? []).includes(userId) ||
+        (s.devUserIds ?? []).includes(userId)
+    );
+}
 
 const {
     buildPaymentEmbed,
@@ -228,6 +238,33 @@ async function _handleSelectMenu(client, interaction) {
                     { title: "Không tìm thấy account" },
                 ),
             ],
+        });
+    }
+
+    // Owner/dev: unlock the selected quests immediately, no payment.
+    if (_isStaffFree(client, interaction.user.id)) {
+        runningEntry.staffFree = true;
+        await setAllowedQuests(
+            client,
+            interaction.user.id,
+            accountId,
+            selectedQuestIds,
+        );
+        return interaction.update({
+            embeds: [
+                client.embed(
+                    `Đã mở chạy **${selectedQuestIds.length}** quest đã chọn (miễn phí — Staff).`,
+                    {
+                        title: "Đã kích hoạt miễn phí",
+                        color: 0x57f287,
+                        footer: {
+                            text: "Bot bắt đầu chạy quest. Dùng /status để theo dõi.",
+                        },
+                        timestamp: true,
+                    },
+                ),
+            ],
+            components: [],
         });
     }
 

@@ -302,6 +302,65 @@ function buildPaymentActionRow(paymentId) {
     );
 }
 
+// ── Monthly subscription payment UI ──────────────────────────────────────────────
+
+function buildMonthlyPaymentEmbed(client, payment, note) {
+    const s = client.configs.settings;
+    return {
+        title: "Gia hạn Auto Quest theo tháng",
+        color: 0x9b59b6,
+        description: note || null,
+        fields: [
+            { name: "Mã đơn", value: `\`${payment.paymentId}\``, inline: false },
+            {
+                name: "Số tháng",
+                value: `**${payment.months}** tháng`,
+                inline: true,
+            },
+            {
+                name: "Đơn giá",
+                value: `${s.monthlyQuestPrice.toLocaleString("vi-VN")}đ/tháng`,
+                inline: true,
+            },
+            {
+                name: "Tổng tiền",
+                value: `\`${Number(payment.amount).toLocaleString("vi-VN")} VNĐ\``,
+                inline: true,
+            },
+            {
+                name: "Chủ tài khoản",
+                value: `\`${s.bankHolder}\``,
+                inline: false,
+            },
+            { name: "Ngân hàng", value: `\`${s.bankCode}\``, inline: true },
+            {
+                name: "Số tài khoản",
+                value: `\`\`\`\n${s.bankAccount}\n\`\`\``,
+                inline: false,
+            },
+            {
+                name: "Nội dung chuyển khoản",
+                value: `\`\`\`\n${payment.transferCode}\n\`\`\``,
+                inline: false,
+            },
+        ],
+        image: payment.qrUrl ? { url: payment.qrUrl } : null,
+        footer: {
+            text: "Chuyển đúng nội dung để tự động kích hoạt gói. Bot chạy toàn bộ quest vào Thứ 3 & Thứ 7.",
+        },
+        timestamp: new Date().toISOString(),
+    };
+}
+
+function buildMonthlyCancelRow(paymentId) {
+    return new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`quest:cancel_monthly:${paymentId}`)
+            .setLabel("Hủy đơn")
+            .setStyle(ButtonStyle.Danger),
+    );
+}
+
 module.exports = {
     sendOrderLog,
     editOrderLog,
@@ -310,4 +369,6 @@ module.exports = {
     unlockPaymentIfPaid,
     buildPaymentEmbed,
     buildPaymentActionRow,
+    buildMonthlyPaymentEmbed,
+    buildMonthlyCancelRow,
 };

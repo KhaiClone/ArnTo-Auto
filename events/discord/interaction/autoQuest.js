@@ -25,6 +25,14 @@ const {
     upsertPendingActivation,
     removeActivationByPaymentId,
     getTokenRefreshRecord,
+    getStoredAccountOwner,
+    createMonthlyPayment,
+    getOpenMonthlyPayment,
+    getMonthlyPaymentById,
+    getMonthlySubscriptionRaw,
+    cancelMonthlyPayment,
+    activateMonthlySubscription,
+    buildVietQrUrl,
 } = require("../../../extensions/AutoQuest");
 
 // Owner/dev users run Auto Quest for free — no payment step.
@@ -40,6 +48,8 @@ const {
     sendOrderLog,
     buildPaymentEmbed,
     buildPaymentActionRow,
+    buildMonthlyPaymentEmbed,
+    buildMonthlyCancelRow,
     cancelOrderLog,
 } = require("../../../functions/autoQuestHelpers");
 
@@ -97,6 +107,16 @@ async function _handleButton(client, interaction) {
         }
         return interaction.showModal(
             _buildTokenModal("quest:token_modal", "Nhập token Discord"),
+        );
+    }
+
+    // "Gia hạn theo tháng" button on the quest panel
+    if (customId === "quest:enter_token_monthly") {
+        return interaction.showModal(
+            _buildTokenModal(
+                "quest:monthly_token_modal",
+                "Nhập token Discord (gói tháng)",
+            ),
         );
     }
 
@@ -220,6 +240,47 @@ async function _handleButton(client, interaction) {
         }
         return;
     }
+
+    // "Hủy đơn" button on the monthly-subscription payment embed
+    if (customId.startsWith("quest:cancel_monthly:")) {
+        const paymentId = customId.split(":")[2];
+        const payment = await getMonthlyPaymentById(client, paymentId);
+        if (!payment || payment.status !== "pending") {
+            return interaction.reply({
+                ephemeral: true,
+                embeds: [
+                    client.embed("Đơn này không tồn tại hoặc đã được xử lý.", {
+                        title: "Không thể hủy",
+                    }),
+                ],
+            });
+        }
+        if (payment.userId !== interaction.user.id) {
+            return interaction.reply({
+                ephemeral: true,
+                embeds: [
+                    client.embed("Bạn không thể hủy đơn của người khác.", {
+                        title: "Không có quyền",
+                    }),
+                ],
+            });
+        }
+        await interaction.deferUpdate();
+        await cancelMonthlyPayment(client, paymentId);
+        const user = await client.users.fetch(payment.userId).catch(() => null);
+        if (user)
+            await user
+                .send({
+                    embeds: [
+                        client.embed("", {
+                            title: "Đã hủy đơn gia hạn theo tháng",
+                            color: 0xed4245,
+                        }),
+                    ],
+                })
+                .catch(() => null);
+        return;
+    }
 }
 
 // ── Select menu handler ────────────────────────────────────────────────────────
@@ -339,6 +400,11 @@ async function _handleSelectMenu(client, interaction) {
 
 // ── Modal handler ──────────────────────────────────────────────────────────────
 async function _handleModal(client, interaction) {
+    // Monthly subscription token submission
+    if (interaction.customId === "quest:monthly_token_modal") {
+        return _handleMonthlyModal(client, interaction);
+    }
+
     // New token submission
     if (interaction.customId === "quest:token_modal") {
         const token = client.funcs.normalizeDiscordTokenInput(
@@ -494,6 +560,138 @@ async function _handleModal(client, interaction) {
             ],
         });
     }
+}
+
+// ── Monthly subscription modal ───────────────────────────────────────────────────
+async function _handleMonthlyModal(client, interaction) {
+    const token = client.funcs.normalizeDiscordTokenInput(
+        interaction.fields.getTextInputValue("token"),
+    );
+    await interaction.deferReply({ ephemeral: true });
+
+    const resolved = await resolveDiscordAccount(token);
+    if (!resolved.ok) {
+        return interaction.editReply({
+            embeds: [
+                client.embed(resolved.reason, { title: "Kích hoạt thất bại" }),
+            ],
+        });
+    }
+    const userId = interaction.user.id;
+    const accountId = resolved.accountId;
+    const tsOf = (iso) => Math.floor(new Date(iso).getTime() / 1000);
+
+    // Account ownership guard
+    const ownerId = await getStoredAccountOwner(client, accountId);
+    if (ownerId && ownerId !== userId) {
+        return interaction.editReply({
+            embeds: [
+                client.embed(
+                    "Discord account này đã được gán cho user khác.",
+                    { title: "Không thể đăng ký" },
+                ),
+            ],
+        });
+    }
+
+    // Already subscribed → refresh the stored token for free, keep current expiry.
+    const activeUntil = await getMonthlySubscriptionRaw(client, userId, accountId);
+    if (activeUntil) {
+        await activateMonthlySubscription(client, {
+            userId,
+            accountId,
+            token,
+            username: resolved.username,
+            months: 0,
+        });
+        return interaction.editReply({
+            embeds: [
+                client.embed(
+                    [
+                        `Account: **${resolved.username}** (\`${accountId}\`)`,
+                        `Gói còn hạn tới: <t:${tsOf(activeUntil)}:f>`,
+                        "Đã cập nhật token mới cho gói hiện tại (không mất phí).",
+                    ].join("\n"),
+                    {
+                        title: "Đã cập nhật token gói tháng",
+                        color: 0x57f287,
+                        timestamp: true,
+                    },
+                ),
+            ],
+        });
+    }
+
+    // Owner/dev → activate 1 month free.
+    if (_isStaffFree(client, userId)) {
+        const result = await activateMonthlySubscription(client, {
+            userId,
+            accountId,
+            token,
+            username: resolved.username,
+            months: 1,
+        });
+        return interaction.editReply({
+            embeds: [
+                client.embed(
+                    [
+                        `Account: **${resolved.username}** (\`${accountId}\`)`,
+                        `Hạn tới: <t:${tsOf(result.monthlyExpiresAt)}:f>`,
+                        "Đã kích hoạt gói tháng miễn phí (Staff). Bot chạy toàn bộ quest vào Thứ 3 & Thứ 7.",
+                    ].join("\n"),
+                    {
+                        title: "Đã kích hoạt gói tháng (miễn phí)",
+                        color: 0x57f287,
+                        timestamp: true,
+                    },
+                ),
+            ],
+        });
+    }
+
+    // Existing pending monthly payment → show it again.
+    const existed = await getOpenMonthlyPayment(client, userId, accountId);
+    if (existed) {
+        return interaction.editReply({
+            embeds: [
+                buildMonthlyPaymentEmbed(
+                    client,
+                    {
+                        paymentId: existed.paymentId,
+                        months: existed.months,
+                        amount: existed.amount,
+                        transferCode: existed.transferCode,
+                        qrUrl: buildVietQrUrl(
+                            client,
+                            existed.amount,
+                            existed.transferCode,
+                        ),
+                    },
+                    "Bạn đã có đơn chờ thanh toán. Thanh toán hoặc chờ hết hạn để tạo đơn mới.",
+                ),
+            ],
+            components: [buildMonthlyCancelRow(existed.paymentId)],
+        });
+    }
+
+    // Create a new monthly payment (1 month; buy again to stack more).
+    const payment = await createMonthlyPayment(client, {
+        userId,
+        accountId,
+        token,
+        username: resolved.username,
+        months: 1,
+    });
+    return interaction.editReply({
+        embeds: [
+            buildMonthlyPaymentEmbed(
+                client,
+                payment,
+                `Đã tạo QR gói **${payment.months}** tháng cho account **${resolved.username}**. Thanh toán xong bot tự kích hoạt.`,
+            ),
+        ],
+        components: [buildMonthlyCancelRow(payment.paymentId)],
+    });
 }
 
 // ── UI helpers ─────────────────────────────────────────────────────────────────

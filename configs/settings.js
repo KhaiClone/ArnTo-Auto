@@ -15,6 +15,19 @@ module.exports = {
         100,
         parseInt(process.env.QUEST_PRICE_PER_ITEM || "2000") || 2000,
     ),
+    // ── Monthly Auto Quest subscription ────────────────────────────────────────
+    // Flat price per 30-day month; bot runs ALL available quests on schedule.
+    monthlyQuestPrice: Math.max(
+        1000,
+        parseInt(process.env.MONTHLY_QUEST_PRICE || "50000") || 50000,
+    ),
+    // Hour (0-23, Asia/Ho_Chi_Minh) the scheduled monthly batch runs on its days.
+    monthlyRunHour: Math.min(
+        23,
+        Math.max(0, parseInt(process.env.MONTHLY_RUN_HOUR || "9") || 9),
+    ),
+    // Fixed run days: 2 = Tuesday, 6 = Saturday (JS getDay()).
+    monthlyRunDays: [2, 6],
     hypeSquadPrice: Math.max(
         100,
         parseInt(process.env.HYPESQUAD_PRICE || "5000") || 5000,

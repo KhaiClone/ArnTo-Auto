@@ -58,6 +58,10 @@ module.exports = {
                 .setLabel("Nhập token")
                 .setStyle(ButtonStyle.Primary),
             new ButtonBuilder()
+                .setCustomId("quest:enter_token_monthly")
+                .setLabel("Gia hạn theo tháng")
+                .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
                 .setCustomId("quest:check_token")
                 .setLabel("Kiểm tra")
                 .setStyle(ButtonStyle.Primary),

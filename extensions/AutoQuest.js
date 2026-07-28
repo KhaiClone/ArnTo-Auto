@@ -682,6 +682,15 @@ function _normalizeSelectedQuestIds(record) {
         : [];
 }
 
+// Monthly subscription end (ISO string) — set for accounts on the "gói tháng" plan.
+// Kept as-is so a sub survives load/save; the scheduler and sweep read it.
+function _normalizeMonthlyExpiresAt(record) {
+    const v = record?.monthlyExpiresAt;
+    if (typeof v !== "string") return null;
+    const t = new Date(v).getTime();
+    return Number.isFinite(t) ? v : null;
+}
+
 function _buildSecureRecord(record, token, secret) {
     const secureToken =
         _hasEncryptedToken(record) && !record.token
@@ -714,6 +723,7 @@ function _buildSecureRecord(record, token, secret) {
         questBatchNotification: _normalizeQuestBatch(record),
         orderLogPending: _normalizeOrderLogPending(record),
         selectedQuestIds: _normalizeSelectedQuestIds(record),
+        monthlyExpiresAt: _normalizeMonthlyExpiresAt(record),
     };
 }
 
@@ -744,6 +754,7 @@ function _buildRefreshRecord(record) {
         questBatchNotification: _normalizeQuestBatch(record),
         orderLogPending: _normalizeOrderLogPending(record),
         selectedQuestIds: _normalizeSelectedQuestIds(record),
+        monthlyExpiresAt: _normalizeMonthlyExpiresAt(record),
     };
 }
 
@@ -813,6 +824,7 @@ async function loadAccounts(client) {
                 questBatchNotification: _normalizeQuestBatch(record),
                 orderLogPending: _normalizeOrderLogPending(record),
                 selectedQuestIds: _normalizeSelectedQuestIds(record),
+                monthlyExpiresAt: _normalizeMonthlyExpiresAt(record),
             };
             if (!persistent[userId]) persistent[userId] = {};
             persistent[userId][accountId] = _buildSecureRecord(
@@ -1511,6 +1523,9 @@ async function restoreAccounts(client) {
     for (const [userId, accounts] of Object.entries(data)) {
         for (const [accountId, record] of Object.entries(accounts)) {
             try {
+                // Monthly-subscription accounts run on a schedule (Tue/Sat), not a
+                // continuous poll loop — skip them here; runMonthlyBatch() drives them.
+                if (_isMonthlyActive(record)) continue;
                 // Resume quest selection. Prefer explicitly stored selectedQuestIds,
                 // but fall back to an in-progress quest batch (status "started")
                 // whose signature holds the quest IDs that were mid-run when the bot
@@ -1611,6 +1626,12 @@ async function sweepStaleAccounts(client) {
 
             // Never remove an account that is actively running.
             if (getRunningMap(userId).has(accountId)) continue;
+
+            // Keep monthly-subscription accounts while the sub is active. They have
+            // no selectedQuestIds (they run everything), so without this guard the
+            // inactivity branch below would wrongly delete a paid subscriber. Once
+            // the sub lapses the record falls through and is cleaned normally.
+            if (_isMonthlyActive(record)) continue;
 
             // (a) Dead-token records waiting for the user to re-enter a token.
             if (_hasRefreshFlag(record)) {
@@ -2029,6 +2050,332 @@ async function getRecoverablePaidActivations(client) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+//  SECTION 5 — MONTHLY SUBSCRIPTION (flat price, scheduled run of ALL quests)
+// ══════════════════════════════════════════════════════════════════════════════
+
+const MONTHLY_PENDING_DB = "quest_monthly_pending";
+const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+
+function _isMonthlyActive(record) {
+    const v = _normalizeMonthlyExpiresAt(record);
+    return !!v && new Date(v).getTime() > _now();
+}
+
+async function _readMonthlyPending(client) {
+    return (await client.db.get(MONTHLY_PENDING_DB)) ?? [];
+}
+async function _saveMonthlyPending(client, list) {
+    await client.db.set(MONTHLY_PENDING_DB, list);
+}
+
+async function _generateUniqueMonthlyCode(client) {
+    const list = await _readMonthlyPending(client);
+    const active = new Set(
+        list
+            .filter((i) => i.status === "pending" && Number(i.expiresAt) > _now())
+            .map((i) => i.transferCode),
+    );
+    for (let i = 0; i < 100; i++) {
+        const code = _randomTransferCode();
+        if (!active.has(code)) return code;
+    }
+    return _randomTransferCode();
+}
+
+async function getMonthlyPaymentById(client, paymentId) {
+    return (
+        (await _readMonthlyPending(client)).find(
+            (i) => i.paymentId === paymentId,
+        ) ?? null
+    );
+}
+
+async function getOpenMonthlyPayment(client, userId, accountId) {
+    return (
+        (await _readMonthlyPending(client)).find(
+            (i) =>
+                i.status === "pending" &&
+                Number(i.expiresAt) > _now() &&
+                i.userId === userId &&
+                i.accountId === accountId,
+        ) ?? null
+    );
+}
+
+/** Active subscription end (ISO) for an account, or null — reads RAW so it still
+ *  reports for a dead-token account (which is not returned by loadAccounts). */
+async function getMonthlySubscriptionRaw(client, userId, accountId) {
+    const raw = await _readAccounts(client);
+    const r = raw[userId]?.[accountId];
+    return _isMonthlyActive(r) ? r.monthlyExpiresAt : null;
+}
+
+async function cancelMonthlyPayment(client, paymentId) {
+    const list = await _readMonthlyPending(client);
+    const removed = list.find((i) => i.paymentId === paymentId) ?? null;
+    const next = list.filter((i) => i.paymentId !== paymentId);
+    if (next.length !== list.length) await _saveMonthlyPending(client, next);
+    return removed;
+}
+
+async function expireStaleMonthlyPayments(client) {
+    const current = _now();
+    const list = await _readMonthlyPending(client);
+    const next = list.filter(
+        (i) => !(i.status === "pending" && Number(i.expiresAt) <= current),
+    );
+    if (next.length !== list.length) await _saveMonthlyPending(client, next);
+    return list.length - next.length;
+}
+
+/**
+ * Activate / extend a monthly subscription on an account. Writes the account
+ * record with an encrypted token and an extended monthlyExpiresAt. Reads RAW so
+ * an existing sub (even one on a dead-token record) is extended, not reset.
+ * months = 0 just refreshes the token while keeping the current expiry.
+ */
+async function activateMonthlySubscription(
+    client,
+    { userId, accountId, token, username, months = 1 },
+) {
+    const secret = client.configs.settings.token;
+    const m = Math.max(0, parseInt(months, 10) || 0);
+    const raw = await _readAccounts(client);
+    if (!raw[userId]) raw[userId] = {};
+    const existing = raw[userId][accountId] ?? {};
+    const base = _isMonthlyActive(existing)
+        ? new Date(existing.monthlyExpiresAt).getTime()
+        : _now();
+    const monthlyExpiresAt = new Date(base + m * MONTH_MS).toISOString();
+    // Build a fresh secure record from the NEW token (no encrypted-token fields in
+    // the input, so _buildSecureRecord encrypts the new token and drops any stale
+    // needsTokenRefresh flag — reviving a dead-token subscriber).
+    raw[userId][accountId] = _buildSecureRecord(
+        {
+            username: username ?? existing.username,
+            addedAt:
+                typeof existing.addedAt === "string"
+                    ? existing.addedAt
+                    : new Date().toISOString(),
+            month: existing.month,
+            selectedQuestIds: [],
+            monthlyExpiresAt,
+        },
+        token,
+        secret,
+    );
+    await _writeAccounts(client, raw);
+    return { userId, accountId, months: m, monthlyExpiresAt };
+}
+
+/**
+ * Create a monthly-subscription payment (QR) and register it with AutoBank.
+ * The token is stored encrypted in the pending record so the sub can be activated
+ * when payment lands (and recovered after a restart via the missed handler).
+ */
+async function createMonthlyPayment(
+    client,
+    { userId, accountId, token, username, months = 1 },
+) {
+    const m = Math.max(1, parseInt(months, 10) || 1);
+    const amount = m * client.configs.settings.monthlyQuestPrice;
+    const transferCode = await _generateUniqueMonthlyCode(client);
+    const secret = client.configs.settings.token;
+    const paymentId = _newPaymentId();
+    const expiresAt = _now() + PAYMENT_EXPIRE_MS;
+
+    const entry = {
+        paymentId,
+        type: "quest_monthly",
+        userId,
+        accountId,
+        username: username ?? "Unknown",
+        months: m,
+        amount,
+        transferCode,
+        status: "pending",
+        createdAt: _now(),
+        expiresAt,
+        ..._encryptActivationToken(token, secret),
+    };
+    const list = await _readMonthlyPending(client);
+    const filtered = list.filter(
+        (i) =>
+            !(
+                i.userId === userId &&
+                i.accountId === accountId &&
+                i.status === "pending"
+            ),
+    );
+    filtered.push(entry);
+    await _saveMonthlyPending(client, filtered);
+
+    if (client.autoBank) {
+        const context = {
+            _handler: "quest_monthly_payment",
+            paymentId,
+            userId,
+            accountId,
+            months: m,
+        };
+        client.autoBank.createQR(amount, transferCode, context, async (err) => {
+            if (err) {
+                await cancelMonthlyPayment(client, paymentId).catch(() => null);
+                return;
+            }
+            await activateMonthlyFromPayment(client, paymentId).catch((e) =>
+                console.warn(`[Monthly] activate error: ${e.message}`),
+            );
+        });
+        await client.db.create("autobank_pending", {
+            customId: transferCode,
+            amount,
+            expireAt: expiresAt,
+            context,
+        });
+    }
+
+    return {
+        paymentId,
+        months: m,
+        amount,
+        transferCode,
+        expiresAt,
+        qrUrl: buildVietQrUrl(client, amount, transferCode),
+    };
+}
+
+/** Activate the subscription tied to a paid monthly payment, then clear it. */
+async function activateMonthlyFromPayment(client, paymentId) {
+    const secret = client.configs.settings.token;
+    const entry = await getMonthlyPaymentById(client, paymentId);
+    if (!entry) return null;
+    const token = _decryptActivationToken(entry, secret);
+    if (!token) {
+        await cancelMonthlyPayment(client, paymentId);
+        return null;
+    }
+    const result = await activateMonthlySubscription(client, {
+        userId: entry.userId,
+        accountId: entry.accountId,
+        token,
+        username: entry.username,
+        months: entry.months,
+    });
+    await cancelMonthlyPayment(client, paymentId);
+    await _notifyAccount({
+        type: "monthly_activated",
+        userId: entry.userId,
+        accountId: entry.accountId,
+        username: entry.username,
+        months: entry.months,
+        monthlyExpiresAt: result.monthlyExpiresAt,
+    });
+    return result;
+}
+
+/** All accounts with an active subscription and a usable (decryptable) token. */
+async function getMonthlyAccounts(client) {
+    const data = await loadAccounts(client);
+    const out = [];
+    for (const [userId, accounts] of Object.entries(data)) {
+        for (const [accountId, record] of Object.entries(accounts)) {
+            if (_isMonthlyActive(record) && record.token) {
+                out.push({
+                    userId,
+                    accountId,
+                    token: record.token,
+                    username: record.username ?? "Unknown",
+                    monthlyExpiresAt: record.monthlyExpiresAt,
+                });
+            }
+        }
+    }
+    return out;
+}
+
+/**
+ * Scheduled batch: run through every active subscriber sequentially and complete
+ * ALL available quests, DMing the owner per completed quest (via the notifier).
+ */
+async function runMonthlyBatch(client) {
+    const accounts = await getMonthlyAccounts(client);
+    let processedAccounts = 0;
+    let completedQuests = 0;
+    for (const { userId, accountId, token, username } of accounts) {
+        try {
+            const resolved = await resolveDiscordAccount(token);
+            if (!resolved.ok) {
+                if (resolved.invalidToken) {
+                    await markTokenRefreshRequired(client, userId, accountId, {
+                        username,
+                    });
+                    await _notifyAccount({
+                        type: "monthly_token_dead",
+                        userId,
+                        accountId,
+                        username,
+                    });
+                }
+                continue;
+            }
+            const completer = new QuestAutocompleter(resolved.api);
+            let guard = 0;
+            while (guard++ < 10) {
+                let quests = await completer.fetchQuests();
+                if (!quests.length) break;
+                quests = await completer.autoAccept(quests);
+                const actionable = quests.filter(
+                    (q) =>
+                        _isEnrolled(q) &&
+                        !_isCompleted(q) &&
+                        _isCompletable(q) &&
+                        !completer.completedIds.has(q.id),
+                );
+                if (!actionable.length) break;
+                for (const q of actionable) {
+                    try {
+                        await completer.processQuest(q);
+                        completedQuests++;
+                        await _notifyAccount({
+                            type: "monthly_quest_done",
+                            userId,
+                            accountId,
+                            username,
+                            questName: _getQuestName(q),
+                            taskType: _getTaskType(q),
+                        });
+                    } catch (e) {
+                        if (_isInvalidTokenError(e)) throw e;
+                        console.error(
+                            `[Monthly] ${username} quest error: ${e.message}`,
+                        );
+                    }
+                    await sleep(2);
+                }
+            }
+            processedAccounts++;
+        } catch (e) {
+            if (_isInvalidTokenError(e)) {
+                await markTokenRefreshRequired(client, userId, accountId, {
+                    username,
+                });
+                await _notifyAccount({
+                    type: "monthly_token_dead",
+                    userId,
+                    accountId,
+                    username,
+                });
+            } else {
+                console.error(`[Monthly] ${username} error: ${e.message}`);
+            }
+        }
+        await sleep(3);
+    }
+    return { processedAccounts, completedQuests, totalAccounts: accounts.length };
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 //  EXPORTS
 // ══════════════════════════════════════════════════════════════════════════════
 module.exports = {
@@ -2071,4 +2418,16 @@ module.exports = {
     removeActivationByPaymentId,
     getRecoverablePaidActivations,
     buildVietQrUrl,
+
+    // Monthly subscription
+    createMonthlyPayment,
+    getMonthlyPaymentById,
+    getOpenMonthlyPayment,
+    getMonthlySubscriptionRaw,
+    cancelMonthlyPayment,
+    expireStaleMonthlyPayments,
+    activateMonthlySubscription,
+    activateMonthlyFromPayment,
+    getMonthlyAccounts,
+    runMonthlyBatch,
 };

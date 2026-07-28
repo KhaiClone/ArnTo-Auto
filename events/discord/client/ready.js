@@ -13,6 +13,9 @@ const {
     getRecoverablePaidActivations,
     markPaymentAsPaid,
     getRunningMap,
+    runMonthlyBatch,
+    expireStaleMonthlyPayments,
+    activateMonthlyFromPayment,
 } = require("../../../extensions/AutoQuest");
 const {
     editOrderLog,
@@ -121,6 +124,17 @@ module.exports = {
             },
         );
 
+        // Register recovery handler for monthly-subscription payments
+        client.autoBank.registerMissedHandler(
+            "quest_monthly_payment",
+            async (client, entry) => {
+                await activateMonthlyFromPayment(
+                    client,
+                    entry.context.paymentId,
+                );
+            },
+        );
+
         // Register recovery handler for HypeSquad payments
         client.autoBank.registerMissedHandler(
             "hs_payment",
@@ -158,6 +172,10 @@ module.exports = {
                 reason,
                 quests,
                 completedQuestNames,
+                questName,
+                taskType,
+                months,
+                monthlyExpiresAt,
             }) => {
                 try {
                     const user = await client.users.fetch(userId);
@@ -284,6 +302,67 @@ module.exports = {
                             ],
                         });
                     }
+
+                    // ── Monthly subscription events ────────────────────────────
+                    if (type === "monthly_activated") {
+                        const until = monthlyExpiresAt
+                            ? `<t:${Math.floor(new Date(monthlyExpiresAt).getTime() / 1000)}:f>`
+                            : "—";
+                        return user.send({
+                            embeds: [
+                                client.embed(
+                                    [
+                                        `Account: **${username}** (\`${accountId}\`)`,
+                                        `Số tháng: **${months}**`,
+                                        `Hạn tới: ${until}`,
+                                        "Bot sẽ tự chạy toàn bộ quest vào Thứ 3 & Thứ 7.",
+                                    ].join("\n"),
+                                    {
+                                        title: "Đã kích hoạt gói tháng",
+                                        color: 0x9b59b6,
+                                        timestamp: true,
+                                    },
+                                ),
+                            ],
+                        });
+                    }
+
+                    if (type === "monthly_quest_done") {
+                        return user.send({
+                            embeds: [
+                                client.embed(
+                                    [
+                                        `Account: **${username}** (\`${accountId}\`)`,
+                                        `Đã hoàn thành quest: **${questName}**${taskType ? ` [${taskType}]` : ""}`,
+                                    ].join("\n"),
+                                    {
+                                        title: "Đã xong 1 quest (gói tháng)",
+                                        color: 0x57f287,
+                                        timestamp: true,
+                                    },
+                                ),
+                            ],
+                        });
+                    }
+
+                    if (type === "monthly_token_dead") {
+                        return user.send({
+                            embeds: [
+                                client.embed(
+                                    [
+                                        `Account: **${username}** (\`${accountId}\`)`,
+                                        "Token của account gói tháng đã hết hạn/không hợp lệ.",
+                                        "Bấm **Gia hạn theo tháng** trên panel và nhập lại token — gói của bạn vẫn còn hạn, không mất phí.",
+                                    ].join("\n"),
+                                    {
+                                        title: "Cần cập nhật token (gói tháng)",
+                                        color: 0xfee75c,
+                                        timestamp: true,
+                                    },
+                                ),
+                            ],
+                        });
+                    }
                 } catch (e) {
                     console.warn(
                         `[ready] notify error for ${userId}: ${e.message}`,
@@ -352,6 +431,15 @@ module.exports = {
                         await unlockPaymentIfPaid(client, paidPayment).catch(
                             () => {},
                         );
+
+                    // ── AutoQuest monthly subscription ─────────────────────────
+                } else if (handler === "quest_monthly_payment") {
+                    await activateMonthlyFromPayment(client, paymentId).catch(
+                        (e) =>
+                            console.warn(
+                                `[ready] monthly recovery failed: ${e.message}`,
+                            ),
+                    );
 
                     // ── AutoHypeSquad ──────────────────────────────────────────
                 } else if (handler === "hs_payment") {
@@ -579,6 +667,11 @@ module.exports = {
                 console.warn("[maintenance] hypesquad payments:", e.message);
             }
             try {
+                await expireStaleMonthlyPayments(client);
+            } catch (e) {
+                console.warn("[maintenance] monthly payments:", e.message);
+            }
+            try {
                 const removed = await sweepStaleAccounts(client);
                 if (removed.length)
                     console.log(
@@ -590,6 +683,53 @@ module.exports = {
         };
         await runMaintenance();
         setInterval(runMaintenance, MAINTENANCE_INTERVAL_MS);
+
+        // ── Monthly Auto Quest scheduler ───────────────────────────────────────
+        // On the configured days (Tue & Sat) at the configured VN hour, run ALL
+        // quests for every active subscriber. A per-day guard key prevents a double
+        // run after a restart, and lets a late start still catch that day's slot.
+        const MONTHLY_LAST_RUN_DB = "quest_monthly_last_run";
+        const runDays = client.configs.settings.monthlyRunDays ?? [2, 6];
+        const runHour = client.configs.settings.monthlyRunHour ?? 9;
+        const vnParts = () => {
+            // Get VN (Asia/Ho_Chi_Minh) weekday + hour + date string.
+            const fmt = new Intl.DateTimeFormat("en-US", {
+                timeZone: "Asia/Ho_Chi_Minh",
+                weekday: "short",
+                hour: "numeric",
+                hour12: false,
+                year: "numeric",
+                month: "2-digit",
+                day: "2-digit",
+            });
+            const parts = Object.fromEntries(
+                fmt.formatToParts(new Date()).map((p) => [p.type, p.value]),
+            );
+            const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+            return {
+                weekday: dayMap[parts.weekday],
+                hour: parseInt(parts.hour, 10) % 24,
+                dateStr: `${parts.year}-${parts.month}-${parts.day}`,
+            };
+        };
+        const checkMonthlySchedule = async () => {
+            try {
+                const { weekday, hour, dateStr } = vnParts();
+                if (!runDays.includes(weekday) || hour < runHour) return;
+                const lastRun = await client.db.get(MONTHLY_LAST_RUN_DB);
+                if (lastRun === dateStr) return; // already ran today
+                await client.db.set(MONTHLY_LAST_RUN_DB, dateStr);
+                console.log(`[Monthly] Scheduled run start (${dateStr})`);
+                const res = await runMonthlyBatch(client);
+                console.log(
+                    `[Monthly] Done: ${res.processedAccounts}/${res.totalAccounts} account(s), ${res.completedQuests} quest(s).`,
+                );
+            } catch (e) {
+                console.warn("[Monthly] scheduler error:", e.message);
+            }
+        };
+        await checkMonthlySchedule();
+        setInterval(checkMonthlySchedule, 60 * 1000); // check every minute
 
         // ── Backup interval ────────────────────────────────────────────────────
         setInterval(

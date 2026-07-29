@@ -61,9 +61,13 @@ module.exports = {
         const id = interaction.customId ?? "";
         if (!id.startsWith("quest:")) return;
 
-        // Allow DM interactions only for the refresh_token button
-        // All other quest interactions require a guild
-        const isDmAllowed = id.startsWith("quest:refresh_token:");
+        // Allow DM interactions for the dead-token re-entry flow: the button
+        // (refresh_token) AND its modal submit (refresh_modal). Without the modal
+        // in this list, submitting the re-entered token from a DM was silently
+        // dropped here, so the button appeared broken. Everything else needs a guild.
+        const isDmAllowed =
+            id.startsWith("quest:refresh_token:") ||
+            id.startsWith("quest:refresh_modal:");
         if (!interaction.guild && !isDmAllowed) return;
 
         try {

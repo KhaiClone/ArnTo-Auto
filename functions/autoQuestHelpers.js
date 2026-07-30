@@ -5,7 +5,46 @@
  * without circular dependency or duplication.
  */
 
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+const {
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    StringSelectMenuBuilder,
+} = require("discord.js");
+
+// Shared builder for the quest panel components (service-type select + status
+// button). Used by /quest-setup AND to reset the select menu after a choice so the
+// same option can be picked again (a string select keeps its last value otherwise).
+function buildQuestPanelComponents() {
+    const menuRow = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+            .setCustomId("quest:menu")
+            .setPlaceholder("Chọn loại dịch vụ để bắt đầu")
+            .addOptions(
+                {
+                    label: "Quest lẻ - done nhanh",
+                    value: "single",
+                    description:
+                        "Chọn số quest cần làm, thanh toán theo từng quest.",
+                    emoji: "⚡",
+                },
+                {
+                    label: "Quest tháng - bot tự động làm quest",
+                    value: "monthly",
+                    description:
+                        "Trả phí theo tháng, bot tự làm toàn bộ quest theo lịch (Thứ 3 & Thứ 7).",
+                    emoji: "♾️",
+                },
+            ),
+    );
+    const btnRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId("quest:check_token")
+            .setLabel("Kiểm tra trạng thái")
+            .setStyle(ButtonStyle.Secondary),
+    );
+    return [menuRow, btnRow];
+}
 const {
     getRunningMap,
     setAllowedQuests,
@@ -407,4 +446,5 @@ module.exports = {
     buildPaymentActionRow,
     buildMonthlyPaymentEmbed,
     buildMonthlyCancelRow,
+    buildQuestPanelComponents,
 };

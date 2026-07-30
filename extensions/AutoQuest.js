@@ -261,8 +261,9 @@ function _isMobileOnlyTask(q) {
 }
 
 class QuestAutocompleter {
-    constructor(api) {
+    constructor(api, label = "") {
         this.api = api;
+        this.label = label; // account username, for readable progress logs
         this.completedIds = new Set();
         this._cachedChannelId = null;
     }
@@ -392,9 +393,19 @@ class QuestAutocompleter {
         await this._enrollAll(toEnroll);
     }
 
+    _log(msg) {
+        console.log(`[Quest]${this.label ? ` ${this.label}` : ""} ${msg}`);
+    }
+
     async processQuest(quest) {
         const taskType = _getTaskType(quest);
         if (!taskType || this.completedIds.has(quest.id)) return;
+        const name = _getQuestName(quest);
+        const needed = _getSecondsNeeded(quest);
+        const startedAt = Date.now();
+        this._log(
+            `▶ Bắt đầu "${name}" (${taskType})${needed ? ` — cần ${needed}s` : ""}`,
+        );
         if (["WATCH_VIDEO", "WATCH_VIDEO_ON_MOBILE"].includes(taskType))
             await this._completeVideo(quest);
         else if (GAME_HEARTBEAT_TASKS.includes(taskType))
@@ -404,12 +415,17 @@ class QuestAutocompleter {
         else if (taskType === "ACHIEVEMENT_IN_ACTIVITY")
             await this._completeAchievement(quest);
         this.completedIds.add(quest.id);
+        this._log(
+            `✓ Hoàn thành "${name}" (mất ${Math.round((Date.now() - startedAt) / 1000)}s)`,
+        );
     }
 
     async _completeVideo(quest) {
         const qid = quest.id,
             needed = _getSecondsNeeded(quest);
+        const name = _getQuestName(quest);
         let done = _getSecondsDone(quest);
+        let lastLog = 0;
         const enrolledTs =
             (_getEnrolledAt(quest)
                 ? new Date(_getEnrolledAt(quest)).getTime()
@@ -439,6 +455,12 @@ class QuestAutocompleter {
                     if (err?.invalidToken) throw err;
                 }
             }
+            if (Date.now() - lastLog > 30000) {
+                this._log(
+                    `   "${name}": ${Math.round(done)}/${needed}s (${Math.round((done / needed) * 100)}%)`,
+                );
+                lastLog = Date.now();
+            }
             if (done + 7 >= needed) break;
             await sleep(1);
         }
@@ -457,7 +479,9 @@ class QuestAutocompleter {
     async _completeGameHeartbeat(quest, taskType) {
         const qid = quest.id,
             needed = _getSecondsNeeded(quest);
+        const name = _getQuestName(quest);
         let done = _getSecondsDone(quest);
+        let lastLog = 0;
         const applicationId = _getApplicationId(quest);
         while (done < needed) {
             try {
@@ -475,6 +499,12 @@ class QuestAutocompleter {
                 }
             } catch (err) {
                 if (err?.invalidToken) throw err;
+            }
+            if (Date.now() - lastLog > 30000) {
+                this._log(
+                    `   "${name}": ${Math.round(done)}/${needed}s (${Math.round((done / needed) * 100)}%)`,
+                );
+                lastLog = Date.now();
             }
             await sleep(HEARTBEAT_INTERVAL);
         }
@@ -1493,7 +1523,7 @@ async function startAccount(client, userId, token, options = {}) {
     }
 
     const abortController = { stopped: false };
-    const completer = new QuestAutocompleter(resolved.api);
+    const completer = new QuestAutocompleter(resolved.api, resolved.username);
     userMap.set(resolved.accountId, {
         completer,
         api: resolved.api,
@@ -2412,7 +2442,7 @@ async function runMonthlyBatch(client) {
                 }
                 continue;
             }
-            const completer = new QuestAutocompleter(resolved.api);
+            const completer = new QuestAutocompleter(resolved.api, username);
             let guard = 0;
             while (guard++ < 10) {
                 let quests = await completer.fetchQuests();

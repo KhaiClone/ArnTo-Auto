@@ -307,7 +307,9 @@ class QuestAutocompleter {
             const res = await this.api.get("/quests/@me");
             if (res.status === 200) {
                 const d = res.data;
-                return Array.isArray(d) ? d : (d?.quests ?? []);
+                const list = Array.isArray(d) ? d : (d?.quests ?? []);
+                this._lastFetched = list; // cached for enrollSelected()
+                return list;
             }
             _throwIfUnauthorized(res, "Lấy danh sách quest thất bại");
             if (res.status === 429) {
@@ -321,16 +323,11 @@ class QuestAutocompleter {
         }
     }
 
-    async autoAccept(quests) {
-        if (!AUTO_ACCEPT) return quests;
-        const unaccepted = quests.filter(
-            (q) => !_isEnrolled(q) && !_isCompleted(q) && _isCompletable(q),
-        );
-        if (!unaccepted.length) return quests;
-
-        // Enroll concurrently instead of sequentially with a 3s gap per quest —
-        // that gap made the "select quest" step take tens of seconds. Each quest
-        // still retries on 429 with its own backoff, so bursts self-throttle.
+    // Enroll a set of quest objects concurrently (each with its own 429 backoff),
+    // instead of sequentially with a 3s gap — that gap made enrolling slow. Rejects
+    // only with an invalidToken error, surfaced to the caller.
+    async _enrollAll(questObjs) {
+        if (!questObjs.length) return;
         const enrollOne = async (q) => {
             try {
                 const isAndroid = _isMobileOnlyTask(q);
@@ -361,15 +358,38 @@ class QuestAutocompleter {
                 if (err?.invalidToken) throw err; // surfaced below
             }
         };
-
-        const results = await Promise.allSettled(unaccepted.map(enrollOne));
+        const results = await Promise.allSettled(questObjs.map(enrollOne));
         const invalid = results.find(
             (r) => r.status === "rejected" && r.reason?.invalidToken,
         );
         if (invalid) throw invalid.reason;
+    }
 
+    async autoAccept(quests) {
+        if (!AUTO_ACCEPT) return quests;
+        const unaccepted = quests.filter(
+            (q) => !_isEnrolled(q) && !_isCompleted(q) && _isCompletable(q),
+        );
+        if (!unaccepted.length) return quests;
+        await this._enrollAll(unaccepted);
         await sleep(1);
         return this.fetchQuests();
+    }
+
+    // Enroll only the quests the user picked (looked up from the last fetch), so
+    // the selection menu can be shown instantly without enrolling everything first.
+    async enrollSelected(ids) {
+        const idSet = new Set((ids ?? []).map(String));
+        if (!idSet.size) return;
+        const quests = this._lastFetched ?? (await this.fetchQuests());
+        const toEnroll = quests.filter(
+            (q) =>
+                idSet.has(String(q.id)) &&
+                !_isEnrolled(q) &&
+                !_isCompleted(q) &&
+                _isCompletable(q),
+        );
+        await this._enrollAll(toEnroll);
     }
 
     async processQuest(quest) {
@@ -1167,15 +1187,13 @@ async function setAllowedQuests(client, userId, accountId, questIds) {
 async function getSelectableQuests(userId, accountId) {
     const entry = getRunningMap(userId).get(accountId);
     if (!entry) return [];
-    let quests = await entry.completer.fetchQuests();
+    // Show the menu from a single fetch — do NOT enroll here (that was the slow
+    // step). enrollSelected() enrolls the picked quests when the user selects, so
+    // they still enter the run loop's `potential` set and actually run.
+    const quests = await entry.completer.fetchQuests();
     if (!quests.length) return [];
-    // Enroll first so the menu only shows quests that are actually runnable — a
-    // selected-but-unenrolled quest would never enter the run loop's `potential`
-    // set and the bot would sit idle. autoAccept() now enrolls in parallel, so this
-    // is fast (was the slow 3s-per-quest step before).
-    quests = await entry.completer.autoAccept(quests);
     return quests
-        .filter((q) => _isEnrolled(q) && !_isCompleted(q) && _isCompletable(q))
+        .filter((q) => !_isCompleted(q) && _isCompletable(q))
         .map((q) => ({
             id: q.id,
             name: _getQuestName(q),

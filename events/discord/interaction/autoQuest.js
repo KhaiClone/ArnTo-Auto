@@ -369,7 +369,14 @@ async function _handleSelectMenu(client, interaction) {
 
     // Owner/dev: unlock the selected quests immediately, no payment.
     if (_isStaffFree(client, interaction.user.id)) {
+        // Ack now — enrolling the picked quests can take ~1-2s (past the 3s limit
+        // if we waited to update). enrollSelected() makes sure the chosen quests are
+        // enrolled so the run loop can start them right away.
+        await interaction.deferUpdate();
         runningEntry.staffFree = true;
+        await runningEntry.completer
+            .enrollSelected(selectedQuestIds)
+            .catch(() => {});
         await setAllowedQuests(
             client,
             interaction.user.id,
@@ -384,7 +391,7 @@ async function _handleSelectMenu(client, interaction) {
             runningEntry.username,
             selectedQuestIds,
         );
-        return interaction.update({
+        return interaction.editReply({
             embeds: [
                 client.embed(
                     `Đã mở chạy **${selectedQuestIds.length}** quest đã chọn (miễn phí — Staff).`,

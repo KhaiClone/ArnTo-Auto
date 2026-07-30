@@ -1274,11 +1274,16 @@ async function _runLoop(
     username,
 ) {
     const POLL_SEC = 60;
+    console.log(`[Loop] ${username}: vòng chạy bắt đầu.`);
     while (!abortController.stopped) {
         const entry = getRunningMap(userId).get(accountId);
         if (!entry) break;
         try {
             let quests = await completer.fetchQuests();
+            if (!quests.length)
+                console.log(
+                    `[Loop] ${username}: fetch 0 quest (chưa có quest khả dụng, hoặc token/kết nối lỗi)`,
+                );
             if (quests.length) {
                 quests = await completer.autoAccept(quests);
                 const potential = quests.filter(
@@ -1314,6 +1319,12 @@ async function _runLoop(
                     (q) =>
                         !requiresSelection ||
                         currentEntry.allowedQuestIds.has(String(q.id)),
+                );
+
+                console.log(
+                    `[Loop] ${username}: ${quests.length} quest, ${potential.length} khả dụng (đã enroll), ` +
+                        `${requiresSelection ? `${currentEntry.allowedQuestIds.size} đã chọn` : "chạy tất cả"}, ` +
+                        `${actionable.length} sẽ chạy`,
                 );
 
                 if (actionable.length) {
@@ -1438,6 +1449,9 @@ async function _runLoop(
                         return !q || _isCompleted(q) || !_isCompletable(q);
                     });
                     if (allDone) {
+                        console.log(
+                            `[Loop] ${username}: các quest đã chọn đã xong/hết hạn → dừng & gỡ account.`,
+                        );
                         _expireAccount(client, userId, accountId);
                         break;
                     }

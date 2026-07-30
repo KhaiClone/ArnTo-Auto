@@ -149,6 +149,7 @@ class DiscordAPI {
         this.buildNumber = buildNumber;
         this.client = axios.create({
             baseURL: API_BASE,
+            timeout: 20000, // never hang the run loop on a stuck request
             headers: {
                 Authorization: token,
                 "Content-Type": "application/json",
@@ -348,12 +349,25 @@ class QuestAutocompleter {
                             : {},
                     );
 
-                    _throwIfUnauthorized(res, "Enroll quest thất bại");
+                    // Only 401 means the token is dead. A 403/400 here is
+                    // quest-specific (account not eligible for THIS quest) — skip
+                    // that quest, do NOT kill the whole account. (Using
+                    // _throwIfUnauthorized would treat 403 as an invalid token and
+                    // silently remove the account.)
+                    if (res.status === 401) {
+                        const e = new Error("Token bị từ chối khi enroll (401)");
+                        e.invalidToken = true;
+                        throw e;
+                    }
                     if (res.status === 429) {
                         await sleep((res.data?.retry_after ?? 5) + 1);
                         continue;
                     }
-                    if ([200, 201, 204].includes(res.status)) break;
+                    if (![200, 201, 204].includes(res.status))
+                        this._log(
+                            `⚠ Không enroll được "${_getQuestName(q)}" (HTTP ${res.status}) — bỏ qua quest này.`,
+                        );
+                    break;
                 }
             } catch (err) {
                 if (err?.invalidToken) throw err; // surfaced below
@@ -1280,12 +1294,10 @@ async function _runLoop(
         if (!entry) break;
         try {
             let quests = await completer.fetchQuests();
-            if (!quests.length)
-                console.log(
-                    `[Loop] ${username}: fetch 0 quest (chưa có quest khả dụng, hoặc token/kết nối lỗi)`,
-                );
+            console.log(`[Loop] ${username}: fetch xong — ${quests.length} quest.`);
             if (quests.length) {
                 quests = await completer.autoAccept(quests);
+                console.log(`[Loop] ${username}: enroll/autoAccept xong.`);
                 const potential = quests.filter(
                     (q) =>
                         _isEnrolled(q) && !_isCompleted(q) && _isCompletable(q),
@@ -1459,6 +1471,9 @@ async function _runLoop(
             }
         } catch (err) {
             if (_isInvalidTokenError(err)) {
+                console.log(
+                    `[Loop] ${username}: token bị từ chối (${err.message}) → gỡ account, gửi DM nhập lại token.`,
+                );
                 await _removeDeadAccount(
                     client,
                     userId,
@@ -1469,7 +1484,7 @@ async function _runLoop(
                 );
                 break;
             }
-            console.error(`[${username}] Loop error:`, err.message);
+            console.error(`[Loop] ${username}: lỗi vòng chạy — ${err.message}`);
         }
         for (let i = 0; i < POLL_SEC; i++) {
             const e = getRunningMap(userId).get(accountId);

@@ -170,9 +170,7 @@ async function _handleButton(client, interaction) {
             };
         });
         const note =
-            list.length > 25
-                ? `Hiển thị 25/${list.length} account.`
-                : "";
+            list.length > 25 ? `Hiển thị 25/${list.length} account.` : "";
         return interaction.editReply({
             embeds: [
                 client.embed(note, {
@@ -250,7 +248,12 @@ async function _handleButton(client, interaction) {
         await interaction.deferUpdate();
         await cancelPayment(client, paymentId);
         await removeActivationByPaymentId(client, paymentId);
-        await cancelOrderLog(client, payment.userId, payment.accountId, "🚫 Đã hủy bởi khách / Hết hạn");
+        await cancelOrderLog(
+            client,
+            payment.userId,
+            payment.accountId,
+            "🚫 Đã hủy bởi khách / Hết hạn",
+        );
 
         const user = await client.users.fetch(payment.userId).catch(() => null);
         if (user) {
@@ -323,7 +326,10 @@ async function _handleMenuSelect(client, interaction) {
     }
     // "single" (quest lẻ): mirror the fresh-token flow; if the user has a dead-token
     // account waiting, prompt a re-entry instead.
-    const refreshRecord = await getTokenRefreshRecord(client, interaction.user.id);
+    const refreshRecord = await getTokenRefreshRecord(
+        client,
+        interaction.user.id,
+    );
     if (refreshRecord) {
         return interaction.showModal(
             _buildTokenModal(
@@ -625,11 +631,11 @@ async function _handleMonthlyModal(client, interaction) {
     const token = client.funcs.normalizeDiscordTokenInput(
         interaction.fields.getTextInputValue("token"),
     );
-    await interaction.update({});
+    await interaction.deferReply({ ephemeral: true });
 
     const resolved = await resolveDiscordAccount(token);
     if (!resolved.ok) {
-        return interaction.followUp({
+        return interaction.editReply({
             embeds: [
                 client.embed(resolved.reason, { title: "Kích hoạt thất bại" }),
             ],
@@ -642,18 +648,21 @@ async function _handleMonthlyModal(client, interaction) {
     // Account ownership guard
     const ownerId = await getStoredAccountOwner(client, accountId);
     if (ownerId && ownerId !== userId) {
-        return interaction.followUp({
+        return interaction.editReply({
             embeds: [
-                client.embed(
-                    "Discord account này đã được gán cho user khác.",
-                    { title: "Không thể đăng ký" },
-                ),
+                client.embed("Discord account này đã được gán cho user khác.", {
+                    title: "Không thể đăng ký",
+                }),
             ],
         });
     }
 
     // Already subscribed → refresh the stored token for free, keep current expiry.
-    const activeUntil = await getMonthlySubscriptionRaw(client, userId, accountId);
+    const activeUntil = await getMonthlySubscriptionRaw(
+        client,
+        userId,
+        accountId,
+    );
     if (activeUntil) {
         await activateMonthlySubscription(client, {
             userId,
@@ -662,7 +671,7 @@ async function _handleMonthlyModal(client, interaction) {
             username: resolved.username,
             months: 0,
         });
-        return interaction.followUp({
+        return interaction.editReply({
             embeds: [
                 client.embed(
                     [
@@ -689,7 +698,7 @@ async function _handleMonthlyModal(client, interaction) {
             username: resolved.username,
             months: 1,
         });
-        return interaction.followUp({
+        return interaction.editReply({
             embeds: [
                 client.embed(
                     [
@@ -710,7 +719,7 @@ async function _handleMonthlyModal(client, interaction) {
     // Existing pending monthly payment → show it again.
     const existed = await getOpenMonthlyPayment(client, userId, accountId);
     if (existed) {
-        return interaction.followUp({
+        return interaction.editReply({
             embeds: [
                 buildMonthlyPaymentEmbed(
                     client,
@@ -740,7 +749,7 @@ async function _handleMonthlyModal(client, interaction) {
         username: resolved.username,
         months: 1,
     });
-    return interaction.followUp({
+    return interaction.editReply({
         embeds: [
             buildMonthlyPaymentEmbed(
                 client,

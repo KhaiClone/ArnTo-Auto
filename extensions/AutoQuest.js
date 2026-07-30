@@ -327,7 +327,11 @@ class QuestAutocompleter {
             (q) => !_isEnrolled(q) && !_isCompleted(q) && _isCompletable(q),
         );
         if (!unaccepted.length) return quests;
-        for (const q of unaccepted) {
+
+        // Enroll concurrently instead of sequentially with a 3s gap per quest —
+        // that gap made the "select quest" step take tens of seconds. Each quest
+        // still retries on 429 with its own backoff, so bursts self-throttle.
+        const enrollOne = async (q) => {
             try {
                 const isAndroid = _isMobileOnlyTask(q);
                 for (let i = 1; i <= 3; i++) {
@@ -354,11 +358,17 @@ class QuestAutocompleter {
                     if ([200, 201, 204].includes(res.status)) break;
                 }
             } catch (err) {
-                if (err?.invalidToken) throw err;
+                if (err?.invalidToken) throw err; // surfaced below
             }
-            await sleep(3);
-        }
-        await sleep(2);
+        };
+
+        const results = await Promise.allSettled(unaccepted.map(enrollOne));
+        const invalid = results.find(
+            (r) => r.status === "rejected" && r.reason?.invalidToken,
+        );
+        if (invalid) throw invalid.reason;
+
+        await sleep(1);
         return this.fetchQuests();
     }
 
@@ -1157,15 +1167,15 @@ async function setAllowedQuests(client, userId, accountId, questIds) {
 async function getSelectableQuests(userId, accountId) {
     const entry = getRunningMap(userId).get(accountId);
     if (!entry) return [];
-    const quests = await entry.completer.fetchQuests();
+    let quests = await entry.completer.fetchQuests();
     if (!quests.length) return [];
-    // Do NOT auto-enroll here. autoAccept() enrolls every unaccepted quest with a
-    // 3s gap each, which made showing the selection menu take tens of seconds.
-    // Enrolling is not needed to display a quest — show every available quest
-    // (completable and not yet completed, enrolled or not). The run loop enrolls the
-    // ones the user actually selects after payment.
+    // Enroll first so the menu only shows quests that are actually runnable — a
+    // selected-but-unenrolled quest would never enter the run loop's `potential`
+    // set and the bot would sit idle. autoAccept() now enrolls in parallel, so this
+    // is fast (was the slow 3s-per-quest step before).
+    quests = await entry.completer.autoAccept(quests);
     return quests
-        .filter((q) => !_isCompleted(q) && _isCompletable(q))
+        .filter((q) => _isEnrolled(q) && !_isCompleted(q) && _isCompletable(q))
         .map((q) => ({
             id: q.id,
             name: _getQuestName(q),

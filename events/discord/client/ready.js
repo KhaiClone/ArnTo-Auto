@@ -14,6 +14,7 @@ const {
     markPaymentAsPaid,
     getRunningMap,
     runMonthlyBatch,
+    runMonthlyEnrollScan,
     expireStaleMonthlyPayments,
     activateMonthlyFromPayment,
     warmBuildNumber,
@@ -694,8 +695,10 @@ module.exports = {
         // quests for every active subscriber. A per-day guard key prevents a double
         // run after a restart, and lets a late start still catch that day's slot.
         const MONTHLY_LAST_RUN_DB = "quest_monthly_last_run";
+        const MONTHLY_LAST_ENROLL_DB = "quest_monthly_last_enroll";
         const runDays = client.configs.settings.monthlyRunDays ?? [2, 6];
         const runHour = client.configs.settings.monthlyRunHour ?? 9;
+        const enrollHour = client.configs.settings.monthlyEnrollHour ?? 3;
         const vnParts = () => {
             // Get VN (Asia/Ho_Chi_Minh) weekday + hour + date string.
             const fmt = new Intl.DateTimeFormat("en-US", {
@@ -733,8 +736,29 @@ module.exports = {
                 console.warn("[Monthly] scheduler error:", e.message);
             }
         };
+        // Daily enroll-only scan (every day at enrollHour), decoupled from the
+        // Tue/Sat completion run — enrolling early speeds up video completion later.
+        const checkMonthlyEnrollSchedule = async () => {
+            try {
+                const { hour, dateStr } = vnParts();
+                if (hour < enrollHour) return;
+                const last = await client.db.get(MONTHLY_LAST_ENROLL_DB);
+                if (last === dateStr) return; // already enrolled today
+                await client.db.set(MONTHLY_LAST_ENROLL_DB, dateStr);
+                console.log(`[MonthlyEnroll] Daily enroll scan start (${dateStr})`);
+                const res = await runMonthlyEnrollScan(client);
+                console.log(
+                    `[MonthlyEnroll] Done: ${res.processed}/${res.totalAccounts} account(s).`,
+                );
+            } catch (e) {
+                console.warn("[MonthlyEnroll] scheduler error:", e.message);
+            }
+        };
+
         await checkMonthlySchedule();
+        await checkMonthlyEnrollSchedule();
         setInterval(checkMonthlySchedule, 60 * 1000); // check every minute
+        setInterval(checkMonthlyEnrollSchedule, 60 * 1000);
 
         // ── Backup interval ────────────────────────────────────────────────────
         setInterval(

@@ -28,6 +28,13 @@ module.exports = {
     ),
     // Fixed run days: 2 = Tuesday, 6 = Saturday (JS getDay()).
     monthlyRunDays: [2, 6],
+    // Hour (0-23, VN) of the DAILY enroll-only scan for monthly accounts. Runs
+    // separately from the Tue/Sat completion run so quests get enrolled early
+    // (which lets video quests complete much faster on the run day).
+    monthlyEnrollHour: Math.min(
+        23,
+        Math.max(0, parseInt(process.env.MONTHLY_ENROLL_HOUR || "3") || 3),
+    ),
     hypeSquadPrice: Math.max(
         100,
         parseInt(process.env.HYPESQUAD_PRICE || "5000") || 5000,

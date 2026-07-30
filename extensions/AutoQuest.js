@@ -373,11 +373,17 @@ class QuestAutocompleter {
                 if (err?.invalidToken) throw err; // surfaced below
             }
         };
-        const results = await Promise.allSettled(questObjs.map(enrollOne));
-        const invalid = results.find(
-            (r) => r.status === "rejected" && r.reason?.invalidToken,
-        );
-        if (invalid) throw invalid.reason;
+        // Bounded concurrency — enroll in small batches so we never fire dozens of
+        // requests at once (that triggers hard rate-limiting and stalls the loop).
+        const CONCURRENCY = 5;
+        for (let i = 0; i < questObjs.length; i += CONCURRENCY) {
+            const batch = questObjs.slice(i, i + CONCURRENCY);
+            const results = await Promise.allSettled(batch.map(enrollOne));
+            const invalid = results.find(
+                (r) => r.status === "rejected" && r.reason?.invalidToken,
+            );
+            if (invalid) throw invalid.reason;
+        }
     }
 
     async autoAccept(quests) {
@@ -1296,8 +1302,21 @@ async function _runLoop(
             let quests = await completer.fetchQuests();
             console.log(`[Loop] ${username}: fetch xong — ${quests.length} quest.`);
             if (quests.length) {
-                quests = await completer.autoAccept(quests);
-                console.log(`[Loop] ${username}: enroll/autoAccept xong.`);
+                // Enroll only the quests we intend to run. Blanket-enrolling every
+                // quest (autoAccept) is what stalled the loop — an account can have
+                // dozens, and a mass parallel enroll gets rate-limited hard.
+                const preEntry = getRunningMap(userId).get(accountId);
+                if (preEntry?.allowedQuestIds instanceof Set) {
+                    if (preEntry.allowedQuestIds.size > 0) {
+                        await completer.enrollSelected([
+                            ...preEntry.allowedQuestIds,
+                        ]);
+                        quests = await completer.fetchQuests();
+                    }
+                } else {
+                    quests = await completer.autoAccept(quests); // run-all mode
+                }
+                console.log(`[Loop] ${username}: enroll xong.`);
                 const potential = quests.filter(
                     (q) =>
                         _isEnrolled(q) && !_isCompleted(q) && _isCompletable(q),
@@ -2527,6 +2546,62 @@ async function runMonthlyBatch(client) {
     return { processedAccounts, completedQuests, totalAccounts: accounts.length };
 }
 
+/**
+ * Daily enroll-only scan for monthly subscribers: enroll every available quest but
+ * do NOT complete anything. Runs separately from the Tue/Sat completion batch so
+ * quests are accepted early — which makes video quests complete much faster on the
+ * run day (their progress is gated by time since enrollment).
+ */
+async function runMonthlyEnrollScan(client) {
+    const accounts = await getMonthlyAccounts(client);
+    let processed = 0;
+    for (const { userId, accountId, token, username } of accounts) {
+        try {
+            const resolved = await resolveDiscordAccount(token);
+            if (!resolved.ok) {
+                if (resolved.invalidToken) {
+                    await markTokenRefreshRequired(client, userId, accountId, {
+                        username,
+                    });
+                    await _notifyAccount({
+                        type: "monthly_token_dead",
+                        userId,
+                        accountId,
+                        username,
+                    });
+                }
+                continue;
+            }
+            const completer = new QuestAutocompleter(resolved.api, username);
+            const quests = await completer.fetchQuests();
+            if (quests.length) {
+                const before = quests.filter((q) => _isEnrolled(q)).length;
+                await completer.autoAccept(quests); // enrolls all unaccepted (bounded)
+                console.log(
+                    `[MonthlyEnroll] ${username}: ${quests.length} quest, đã enroll thêm (trước: ${before} đã nhận).`,
+                );
+            }
+            processed++;
+        } catch (e) {
+            if (_isInvalidTokenError(e)) {
+                await markTokenRefreshRequired(client, userId, accountId, {
+                    username,
+                });
+                await _notifyAccount({
+                    type: "monthly_token_dead",
+                    userId,
+                    accountId,
+                    username,
+                });
+            } else {
+                console.error(`[MonthlyEnroll] ${username} error: ${e.message}`);
+            }
+        }
+        await sleep(3);
+    }
+    return { processed, totalAccounts: accounts.length };
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  EXPORTS
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2584,4 +2659,5 @@ module.exports = {
     getMonthlyAccounts,
     getUserAccountsStatus,
     runMonthlyBatch,
+    runMonthlyEnrollScan,
 };

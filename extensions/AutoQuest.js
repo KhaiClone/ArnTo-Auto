@@ -1023,7 +1023,10 @@ async function setStoredSelectedQuestIds(client, userId, accountId, ids) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 const running = new Map();
-const BUILD_CACHE_TTL = 5 * 60_000;
+// Build number changes rarely (roughly weekly) and a slightly stale value still
+// works, so cache it long to keep it off the token-entry path. Pre-warmed at
+// startup via warmBuildNumber().
+const BUILD_CACHE_TTL = 6 * 60 * 60_000; // 6 hours
 let buildCache = { value: null, fetchedAt: 0 };
 let accountNotifier = null;
 
@@ -1033,6 +1036,14 @@ async function _getBuildNumber() {
     const v = await fetchLatestBuildNumber();
     buildCache = { value: v, fetchedAt: Date.now() };
     return v;
+}
+
+/** Fetch and cache the build number ahead of time (call on startup) so the first
+ *  token entry does not pay the fetch cost. */
+async function warmBuildNumber() {
+    try {
+        await _getBuildNumber();
+    } catch {}
 }
 
 function getRunningMap(userId) {
@@ -1146,11 +1157,15 @@ async function setAllowedQuests(client, userId, accountId, questIds) {
 async function getSelectableQuests(userId, accountId) {
     const entry = getRunningMap(userId).get(accountId);
     if (!entry) return [];
-    let quests = await entry.completer.fetchQuests();
+    const quests = await entry.completer.fetchQuests();
     if (!quests.length) return [];
-    quests = await entry.completer.autoAccept(quests);
+    // Do NOT auto-enroll here. autoAccept() enrolls every unaccepted quest with a
+    // 3s gap each, which made showing the selection menu take tens of seconds.
+    // Enrolling is not needed to display a quest — show every available quest
+    // (completable and not yet completed, enrolled or not). The run loop enrolls the
+    // ones the user actually selects after payment.
     return quests
-        .filter((q) => _isEnrolled(q) && !_isCompleted(q) && _isCompletable(q))
+        .filter((q) => !_isCompleted(q) && _isCompletable(q))
         .map((q) => ({
             id: q.id,
             name: _getQuestName(q),
@@ -2441,6 +2456,7 @@ module.exports = {
     removeStoredAccount,
     restoreAccounts,
     sweepStaleAccounts,
+    warmBuildNumber,
 
     // Storage
     loadAccounts,

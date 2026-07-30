@@ -16,6 +16,7 @@ const {
     runMonthlyBatch,
     expireStaleMonthlyPayments,
     activateMonthlyFromPayment,
+    warmBuildNumber,
 } = require("../../../extensions/AutoQuest");
 const {
     editOrderLog,
@@ -80,6 +81,10 @@ module.exports = {
 
         console.log(`Username: ${client.user.username}`);
         console.log(`Client ID: ${client.user.id}`);
+
+        // Pre-warm the Discord build number cache in the background so the first
+        // token entry doesn't wait on the (multi-request) build-number fetch.
+        warmBuildNumber();
 
         // ── Init AutoBank & AutoPanel ──────────────────────────────────────────
         const s = client.configs.settings;

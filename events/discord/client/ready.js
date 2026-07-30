@@ -106,6 +106,12 @@ module.exports = {
                 const paidPayment = await markPaymentAsPaid(client, paymentId);
                 if (!paidPayment) return;
 
+                const unlockResult = await unlockPaymentIfPaid(
+                    client,
+                    paidPayment,
+                ).catch(() => false);
+                const pendingToken = unlockResult === "pending_token";
+
                 const user = await client.users.fetch(userId).catch(() => null);
                 if (user) {
                     await user
@@ -115,17 +121,20 @@ module.exports = {
                                     [
                                         `Mã đơn: \`${paymentId}\``,
                                         `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
-                                        "Đã xác nhận thanh toán. Đã mở chạy quest đã chọn.",
+                                        pendingToken
+                                            ? "⚠️ Token account đã die. **Nhập lại token** để chạy quest đã mua (đã lưu, không mất)."
+                                            : "Đã xác nhận thanh toán. Đã mở chạy quest đã chọn.",
                                     ].join("\n"),
                                     {
-                                        title: "Đã xác nhận thanh toán",
-                                        color: 0x57f287,
+                                        title: pendingToken
+                                            ? "Đã thanh toán — cần nhập lại token"
+                                            : "Đã xác nhận thanh toán",
+                                        color: pendingToken ? 0xfee75c : 0x57f287,
                                     },
                                 ),
                             ],
                         })
                         .catch(() => null);
-                    await unlockPaymentIfPaid(client, paidPayment);
                 }
             },
         );
@@ -412,6 +421,12 @@ module.exports = {
                         client,
                         paymentId,
                     );
+                    const unlockResult = paidPayment
+                        ? await unlockPaymentIfPaid(client, paidPayment).catch(
+                              () => false,
+                          )
+                        : false;
+                    const pendingToken = unlockResult === "pending_token";
                     const user = await client.users
                         .fetch(userId)
                         .catch(() => null);
@@ -423,20 +438,22 @@ module.exports = {
                                         [
                                             `Mã đơn: \`${paymentId}\``,
                                             `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
-                                            "Bot phát hiện thanh toán khi khởi động lại. Đã mở chạy quest đã chọn.",
+                                            pendingToken
+                                                ? "⚠️ Token account đã die. **Nhập lại token** để chạy quest đã mua (đã lưu, không mất)."
+                                                : "Bot phát hiện thanh toán khi khởi động lại. Đã mở chạy quest đã chọn.",
                                         ].join("\n"),
                                         {
-                                            title: "Đã xác nhận thanh toán (khôi phục)",
-                                            color: 0x57f287,
+                                            title: pendingToken
+                                                ? "Đã thanh toán — cần nhập lại token"
+                                                : "Đã xác nhận thanh toán (khôi phục)",
+                                            color: pendingToken
+                                                ? 0xfee75c
+                                                : 0x57f287,
                                         },
                                     ),
                                 ],
                             })
                             .catch(() => null);
-                    if (paidPayment)
-                        await unlockPaymentIfPaid(client, paidPayment).catch(
-                            () => {},
-                        );
 
                     // ── AutoQuest monthly subscription ─────────────────────────
                 } else if (handler === "quest_monthly_payment") {

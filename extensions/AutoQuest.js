@@ -1970,12 +1970,17 @@ async function createQuestPayment(client, { userId, accountId, questIds }) {
                 selectedQuestIds.length,
             ).catch(() => null);
 
-            // Unlock quest run
-            await unlockPaymentIfPaid(client, paidPayment).catch((e) =>
-                console.warn(`[autoQuest] unlock error: ${e.message}`),
-            );
+            // Unlock quest run (or stash for token reset if the account is dead)
+            const unlockResult = await unlockPaymentIfPaid(
+                client,
+                paidPayment,
+            ).catch((e) => {
+                console.warn(`[autoQuest] unlock error: ${e.message}`);
+                return false;
+            });
+            const pendingToken = unlockResult === "pending_token";
 
-            // DM user
+            // DM user — accurate message: running now vs waiting for token re-entry.
             try {
                 const user = await client.users.fetch(userId).catch(() => null);
                 if (user)
@@ -1985,14 +1990,33 @@ async function createQuestPayment(client, { userId, accountId, questIds }) {
                                 [
                                     `Mã đơn: \`${payment.id}\``,
                                     `Số tiền: ${Number(amount).toLocaleString("vi-VN")}đ`,
-                                    `Đã mở chạy ${selectedQuestIds.length} quest đã chọn.`,
+                                    pendingToken
+                                        ? `⚠️ Token account đã die trong lúc chờ thanh toán. **Nhập lại token** để bot tự chạy ${selectedQuestIds.length} quest đã mua (đã lưu, không mất).`
+                                        : `Đã mở chạy ${selectedQuestIds.length} quest đã chọn.`,
                                 ].join("\n"),
                                 {
-                                    title: "Đã xác nhận thanh toán",
-                                    color: 0x57f287,
+                                    title: pendingToken
+                                        ? "Đã thanh toán — cần nhập lại token"
+                                        : "Đã xác nhận thanh toán",
+                                    color: pendingToken ? 0xfee75c : 0x57f287,
                                 },
                             ),
                         ],
+                        components: pendingToken
+                            ? [
+                                  {
+                                      type: 1, // ActionRow
+                                      components: [
+                                          {
+                                              type: 2, // Button
+                                              style: 1, // Primary
+                                              label: "Nhập lại token",
+                                              custom_id: `quest:refresh_token:${accountId}`,
+                                          },
+                                      ],
+                                  },
+                              ]
+                            : [],
                     });
             } catch (e) {
                 console.warn(`[autoQuest] DM notify error: ${e.message}`);

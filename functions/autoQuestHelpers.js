@@ -14,6 +14,8 @@ const {
     removeActivationByPaymentId,
     getOrderLogPending,
     setOrderLogPending,
+    markTokenRefreshRequired,
+    getStoredSelectedQuestIds,
 } = require("../extensions/AutoQuest");
 
 // In-memory registry: `${userId}:${accountId}` → { messageId, footerText }
@@ -173,9 +175,26 @@ async function cancelOrderLog(client, userId, accountId, reason) {
 
 // ── Payment unlock ─────────────────────────────────────────────────────────────
 
+// Persist paid quests into the account's token-refresh record so they are NOT lost
+// when the account can't start (token died while waiting for payment). After the
+// user re-enters their token, the refresh flow reads these and resumes the run.
+async function _stashPaidQuestsForReset(client, userId, accountId, questIds) {
+    const existing = await getStoredSelectedQuestIds(client, userId, accountId);
+    const merged = [
+        ...new Set(
+            [...existing, ...(questIds ?? [])].map(String).filter(Boolean),
+        ),
+    ];
+    await markTokenRefreshRequired(client, userId, accountId, {
+        selectedQuestIds: merged,
+    });
+    return merged;
+}
+
 /**
  * After a payment is confirmed as paid, unlock the quest run for the user.
- * Handles 3 cases: account already running, account not running (start it), no activation record.
+ * Returns "unlocked" (running now), "pending_token" (paid quests saved, waiting for
+ * the user to re-enter a dead token), or false (nothing to do).
  */
 async function unlockPaymentIfPaid(client, payment) {
     if (!payment || payment.status !== "paid") return false;
@@ -194,7 +213,7 @@ async function unlockPaymentIfPaid(client, payment) {
                 activation.selectedQuestIds,
             );
             if (unlocked) await removeActivationByPaymentId(client, payment.id);
-            return unlocked;
+            return unlocked ? "unlocked" : false;
         }
 
         // Case 2: account not running — start it, then unlock
@@ -211,10 +230,19 @@ async function unlockPaymentIfPaid(client, payment) {
             },
         );
         if (!started.ok) {
+            // Token dead / can't start — stash the paid quests so they resume after
+            // the user re-enters their token, instead of being silently lost.
             console.warn(
-                `[autoQuestHelpers] Cannot start account for payment ${payment.id}: ${started.reason}`,
+                `[autoQuestHelpers] Cannot start account for payment ${payment.id} (${started.reason}) — lưu quest chờ reset token.`,
             );
-            return false;
+            await _stashPaidQuestsForReset(
+                client,
+                payment.userId,
+                payment.accountId,
+                activation.selectedQuestIds,
+            );
+            await removeActivationByPaymentId(client, payment.id);
+            return "pending_token";
         }
         const unlocked = await setAllowedQuests(
             client,
@@ -223,16 +251,24 @@ async function unlockPaymentIfPaid(client, payment) {
             activation.selectedQuestIds,
         );
         if (unlocked) await removeActivationByPaymentId(client, payment.id);
-        return unlocked;
+        return unlocked ? "unlocked" : false;
     }
 
-    // Case 3: no activation record — fallback to payment's own selectedQuestIds
-    return setAllowedQuests(
+    // Case 3: no activation record — try a running account, else stash for reset.
+    const unlocked = await setAllowedQuests(
         client,
         payment.userId,
         payment.accountId,
         payment.selectedQuestIds,
     );
+    if (unlocked) return "unlocked";
+    await _stashPaidQuestsForReset(
+        client,
+        payment.userId,
+        payment.accountId,
+        payment.selectedQuestIds,
+    );
+    return "pending_token";
 }
 
 // ── Payment embed ──────────────────────────────────────────────────────────────

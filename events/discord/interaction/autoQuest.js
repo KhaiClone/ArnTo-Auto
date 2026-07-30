@@ -625,11 +625,11 @@ async function _handleMonthlyModal(client, interaction) {
     const token = client.funcs.normalizeDiscordTokenInput(
         interaction.fields.getTextInputValue("token"),
     );
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.update({});
 
     const resolved = await resolveDiscordAccount(token);
     if (!resolved.ok) {
-        return interaction.editReply({
+        return interaction.followUp({
             embeds: [
                 client.embed(resolved.reason, { title: "Kích hoạt thất bại" }),
             ],
@@ -642,7 +642,7 @@ async function _handleMonthlyModal(client, interaction) {
     // Account ownership guard
     const ownerId = await getStoredAccountOwner(client, accountId);
     if (ownerId && ownerId !== userId) {
-        return interaction.editReply({
+        return interaction.followUp({
             embeds: [
                 client.embed(
                     "Discord account này đã được gán cho user khác.",
@@ -662,7 +662,7 @@ async function _handleMonthlyModal(client, interaction) {
             username: resolved.username,
             months: 0,
         });
-        return interaction.editReply({
+        return interaction.followUp({
             embeds: [
                 client.embed(
                     [
@@ -689,7 +689,7 @@ async function _handleMonthlyModal(client, interaction) {
             username: resolved.username,
             months: 1,
         });
-        return interaction.editReply({
+        return interaction.followUp({
             embeds: [
                 client.embed(
                     [
@@ -710,7 +710,7 @@ async function _handleMonthlyModal(client, interaction) {
     // Existing pending monthly payment → show it again.
     const existed = await getOpenMonthlyPayment(client, userId, accountId);
     if (existed) {
-        return interaction.editReply({
+        return interaction.followUp({
             embeds: [
                 buildMonthlyPaymentEmbed(
                     client,
@@ -740,7 +740,7 @@ async function _handleMonthlyModal(client, interaction) {
         username: resolved.username,
         months: 1,
     });
-    return interaction.editReply({
+    return interaction.followUp({
         embeds: [
             buildMonthlyPaymentEmbed(
                 client,

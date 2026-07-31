@@ -1,9 +1,4 @@
-const {
-    AttachmentBuilder,
-    ActionRowBuilder,
-    ButtonBuilder,
-    ButtonStyle,
-} = require("discord.js");
+const { AttachmentBuilder } = require("discord.js");
 const AutoBank = require("../../../extensions/AutoBank");
 const {
     restoreAccounts,
@@ -285,25 +280,15 @@ module.exports = {
                                         "Bot phát hiện token không còn hợp lệ.",
                                         `Account bị gỡ: **${username}** (\`${accountId}\`)`,
                                         reason ? `Chi tiết: ${reason}` : null,
-                                        "Bấm nút bên dưới để nhập lại token.",
+                                        "Vào panel Auto Quest và bấm nút **🔑 Cập nhật token** để gửi lại token — quest đã mua vẫn được giữ, không mất phí.",
                                     ]
                                         .filter(Boolean)
                                         .join("\n"),
                                     {
-                                        title: "Nhắc lại token",
+                                        title: "Cần cập nhật token",
                                         color: 0xfee75c,
                                         timestamp: true,
                                     },
-                                ),
-                            ],
-                            components: [
-                                new ActionRowBuilder().addComponents(
-                                    new ButtonBuilder()
-                                        .setCustomId(
-                                            `quest:refresh_token:${accountId}`,
-                                        )
-                                        .setLabel("Nhập token ngay")
-                                        .setStyle(ButtonStyle.Primary),
                                 ),
                             ],
                         });

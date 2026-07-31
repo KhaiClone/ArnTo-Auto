@@ -127,18 +127,35 @@ async function _handleButton(client, interaction) {
         );
     }
 
-    // "Cập nhật token" button — behaviour to be defined later. For now just
-    // acknowledge so the interaction doesn't error out ("This interaction failed").
+    // "Cập nhật token" button — for accounts whose token has died. Looks up the
+    // account waiting for a token re-entry and opens the re-entry modal (reusing the
+    // quest:refresh_modal flow that resolves the token and resumes the paid quests /
+    // monthly plan). If nothing is waiting, tell the user there's nothing to update.
     if (customId === "quest:update_token") {
-        return interaction.reply({
-            ephemeral: true,
-            embeds: [
-                client.embed("Tính năng đang được hoàn thiện, vui lòng quay lại sau.", {
-                    title: "🔑 Cập nhật token",
-                    color: 0xfee75c,
-                }),
-            ],
-        });
+        const refreshRecord = await getTokenRefreshRecord(
+            client,
+            interaction.user.id,
+        );
+        if (!refreshRecord) {
+            return interaction.reply({
+                ephemeral: true,
+                embeds: [
+                    client.embed(
+                        "Bạn không có account nào đang chờ cập nhật token. Nút này chỉ dùng khi bot báo token của bạn bị lỗi.",
+                        {
+                            title: "🔑 Cập nhật token",
+                            color: 0xfee75c,
+                        },
+                    ),
+                ],
+            });
+        }
+        return interaction.showModal(
+            _buildTokenModal(
+                `quest:refresh_modal:${refreshRecord.accountId}`,
+                "Nhập lại token Discord",
+            ),
+        );
     }
 
     if (customId === "quest:check_token") {

@@ -2019,32 +2019,17 @@ async function createQuestPayment(client, { userId, accountId, questIds }) {
                                     `Mã đơn: \`${payment.id}\``,
                                     `Số tiền: ${Number(amount).toLocaleString("vi-VN")}đ`,
                                     pendingToken
-                                        ? `⚠️ Token account đã die trong lúc chờ thanh toán. **Nhập lại token** để bot tự chạy ${selectedQuestIds.length} quest đã mua (đã lưu, không mất).`
+                                        ? `⚠️ Token account đã die trong lúc chờ thanh toán. Vào panel Auto Quest và bấm nút **🔑 Cập nhật token** để gửi lại token — bot sẽ tự chạy ${selectedQuestIds.length} quest đã mua (đã lưu, không mất).`
                                         : `Đã mở chạy ${selectedQuestIds.length} quest đã chọn.`,
                                 ].join("\n"),
                                 {
                                     title: pendingToken
-                                        ? "Đã thanh toán — cần nhập lại token"
+                                        ? "Đã thanh toán — cần cập nhật token"
                                         : "Đã xác nhận thanh toán",
                                     color: pendingToken ? 0xfee75c : 0x57f287,
                                 },
                             ),
                         ],
-                        components: pendingToken
-                            ? [
-                                  {
-                                      type: 1, // ActionRow
-                                      components: [
-                                          {
-                                              type: 2, // Button
-                                              style: 1, // Primary
-                                              label: "Nhập lại token",
-                                              custom_id: `quest:refresh_token:${accountId}`,
-                                          },
-                                      ],
-                                  },
-                              ]
-                            : [],
                     });
             } catch (e) {
                 console.warn(`[autoQuest] DM notify error: ${e.message}`);

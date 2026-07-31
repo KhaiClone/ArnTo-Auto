@@ -34,7 +34,9 @@ const {
     activateMonthlySubscription,
     getUserAccountsStatus,
     buildVietQrUrl,
+    stopAccount,
 } = require("../../../extensions/AutoQuest");
+const PanelQuest = require("../../../extensions/PanelQuest");
 
 // Owner/dev users run Auto Quest for free — no payment step.
 function _isStaffFree(client, userId) {
@@ -381,15 +383,27 @@ async function _handleSelectMenu(client, interaction) {
         // enrolled so the run loop can start them right away.
         await interaction.deferUpdate();
         runningEntry.staffFree = true;
-        await runningEntry.completer
-            .enrollSelected(selectedQuestIds)
-            .catch(() => {});
-        await setAllowedQuests(
-            client,
-            interaction.user.id,
-            accountId,
-            selectedQuestIds,
-        );
+        if (PanelQuest.isEnabled()) {
+            // Delegate execution to the panel (stop the idle local loop first).
+            const token = runningEntry.token;
+            stopAccount(interaction.user.id, accountId);
+            await PanelQuest.start({
+                token,
+                mode: "select",
+                selectedQuestIds,
+                ref: interaction.user.id,
+            }).catch((e) => console.warn(`[PanelQuest] staff start: ${e.message}`));
+        } else {
+            await runningEntry.completer
+                .enrollSelected(selectedQuestIds)
+                .catch(() => {});
+            await setAllowedQuests(
+                client,
+                interaction.user.id,
+                accountId,
+                selectedQuestIds,
+            );
+        }
         // Create the order log now (marked "Miễn phí (Staff)" via the staffFree flag).
         await sendOrderLog(
             client,

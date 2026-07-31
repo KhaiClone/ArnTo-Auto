@@ -73,6 +73,81 @@ module.exports = {
                 }
             });
 
+            // ── Panel quest webhook ──────────────────────────────────────────────
+            // The bot-panel runs quests for us (payment stays here) and POSTs quest
+            // events back here. ref = the buyer's Discord user id.
+            app.post("/api/quest-event", async (req, res) => {
+                const key = process.env.PANEL_API_KEY;
+                if (!key) return res.status(503).json({ error: "disabled" });
+                if (req.header("x-api-key") !== key)
+                    return res.status(401).json({ error: "unauthorized" });
+                res.json({ ok: true }); // ack immediately; handle async
+                try {
+                    const { type, accountId, ref, questName, status, error } =
+                        req.body || {};
+                    const userId = ref;
+                    if (!userId) return;
+                    const user = await client.users.fetch(userId).catch(() => null);
+
+                    if (type === "quest_done" && questName && user) {
+                        await user
+                            .send({
+                                embeds: [
+                                    client.embed(
+                                        `Đã hoàn thành quest: **${questName}**`,
+                                        {
+                                            title: "✅ Đã hoàn thành 1 quest",
+                                            color: 0x57f287,
+                                            timestamp: true,
+                                        },
+                                    ),
+                                ],
+                            })
+                            .catch(() => null);
+                    } else if (type === "status" && status === "done") {
+                        if (user)
+                            await user
+                                .send({
+                                    embeds: [
+                                        client.embed(
+                                            "Tất cả quest đã chọn đã hoàn thành.",
+                                            {
+                                                title: "Đã xong đơn quest",
+                                                color: 0x57f287,
+                                            },
+                                        ),
+                                    ],
+                                })
+                                .catch(() => null);
+                    } else if (type === "status" && status === "token_dead") {
+                        await cancelOrderLog(
+                            client,
+                            userId,
+                            accountId,
+                            "⏸️ Token account bị dead. Nhập lại token để tiếp tục.",
+                        ).catch(() => null);
+                        if (user)
+                            await user
+                                .send({
+                                    embeds: [
+                                        client.embed(
+                                            "Token account đã dead. Vào panel nhập token để tiếp tục chạy quest đã mua.",
+                                            {
+                                                title: "Cần nhập lại token",
+                                                color: 0xfee75c,
+                                            },
+                                        ),
+                                    ],
+                                })
+                                .catch(() => null);
+                    } else if (type === "status" && status === "error" && error) {
+                        console.warn(`[quest-event] ${userId} error: ${error}`);
+                    }
+                } catch (e) {
+                    console.warn(`[quest-event] handler error: ${e.message}`);
+                }
+            });
+
             app.listen(client.configs.settings.port, () =>
                 console.log(
                     `Server listening on port ${client.configs.settings.port}`,

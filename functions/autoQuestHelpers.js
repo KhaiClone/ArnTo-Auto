@@ -49,6 +49,7 @@ const {
     getRunningMap,
     setAllowedQuests,
     startAccount,
+    stopAccount,
     getActivationByPaymentId,
     removeActivationByPaymentId,
     getOrderLogPending,
@@ -56,6 +57,7 @@ const {
     markTokenRefreshRequired,
     getStoredSelectedQuestIds,
 } = require("../extensions/AutoQuest");
+const PanelQuest = require("../extensions/PanelQuest");
 
 // In-memory registry: `${userId}:${accountId}` → { messageId, footerText }
 const orderLogRegistry = new Map();
@@ -239,6 +241,43 @@ async function unlockPaymentIfPaid(client, payment) {
     if (!payment || payment.status !== "paid") return false;
 
     const activation = await getActivationByPaymentId(client, payment.id);
+
+    // Delegate execution to the panel when enabled: stop the idle local loop (it was
+    // started at token entry and never got quests) and let the panel run + webhook
+    // completions back. Payment itself stays here in arnto-auto.
+    if (PanelQuest.isEnabled()) {
+        const token = activation?.token;
+        const ids = activation?.selectedQuestIds ?? payment.selectedQuestIds ?? [];
+        if (token) {
+            try {
+                stopAccount(payment.userId, payment.accountId);
+                await PanelQuest.start({
+                    token,
+                    mode: "select",
+                    selectedQuestIds: ids,
+                    ref: payment.userId,
+                });
+                if (activation) await removeActivationByPaymentId(client, payment.id);
+                return "unlocked";
+            } catch (err) {
+                if (err.tokenDead) {
+                    await _stashPaidQuestsForReset(
+                        client,
+                        payment.userId,
+                        payment.accountId,
+                        ids,
+                    );
+                    if (activation)
+                        await removeActivationByPaymentId(client, payment.id);
+                    return "pending_token";
+                }
+                console.warn(
+                    `[PanelQuest] start failed, fallback to local: ${err.message}`,
+                );
+                // fall through to local execution below
+            }
+        }
+    }
 
     if (activation) {
         const userMap = getRunningMap(payment.userId);

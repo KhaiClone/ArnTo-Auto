@@ -741,18 +741,34 @@ module.exports = {
                 dateStr: `${parts.year}-${parts.month}-${parts.day}`,
             };
         };
+        // In-memory guards so the minute-interval never starts a second run/scan
+        // while one is already going in this process (a batch can take hours).
+        let monthlyRunInProgress = false;
+        let monthlyEnrollInProgress = false;
+
         const checkMonthlySchedule = async () => {
             try {
                 const { weekday, hour, dateStr } = vnParts();
                 if (!runDays.includes(weekday) || hour < runHour) return;
+                if (monthlyRunInProgress) return;
                 const lastRun = await client.db.get(MONTHLY_LAST_RUN_DB);
-                if (lastRun === dateStr) return; // already ran today
-                await client.db.set(MONTHLY_LAST_RUN_DB, dateStr);
-                console.log(`[Monthly] Scheduled run start (${dateStr})`);
-                const res = await runMonthlyBatch(client);
-                console.log(
-                    `[Monthly] Done: ${res.processedAccounts}/${res.totalAccounts} account(s), ${res.completedQuests} quest(s).`,
-                );
+                if (lastRun === dateStr) return; // already COMPLETED today
+                monthlyRunInProgress = true;
+                try {
+                    console.log(`[Monthly] Scheduled run start (${dateStr})`);
+                    const res = await runMonthlyBatch(client);
+                    // Mark done only AFTER the batch finishes. If the bot crashes
+                    // mid-run the guard stays unset, so the next start re-runs and
+                    // finishes the remaining accounts — already-done accounts are quick
+                    // no-ops (completed quests are skipped), and a quest that was mid-
+                    // progress resumes from where Discord has it.
+                    await client.db.set(MONTHLY_LAST_RUN_DB, dateStr);
+                    console.log(
+                        `[Monthly] Done: ${res.processedAccounts}/${res.totalAccounts} account(s), ${res.completedQuests} quest(s).`,
+                    );
+                } finally {
+                    monthlyRunInProgress = false;
+                }
             } catch (e) {
                 console.warn("[Monthly] scheduler error:", e.message);
             }
@@ -763,21 +779,35 @@ module.exports = {
             try {
                 const { hour, dateStr } = vnParts();
                 if (hour < enrollHour) return;
+                if (monthlyEnrollInProgress) return;
                 const last = await client.db.get(MONTHLY_LAST_ENROLL_DB);
-                if (last === dateStr) return; // already enrolled today
-                await client.db.set(MONTHLY_LAST_ENROLL_DB, dateStr);
-                console.log(`[MonthlyEnroll] Daily enroll scan start (${dateStr})`);
-                const res = await runMonthlyEnrollScan(client);
-                console.log(
-                    `[MonthlyEnroll] Done: ${res.processed}/${res.totalAccounts} account(s).`,
-                );
+                if (last === dateStr) return; // already COMPLETED today
+                monthlyEnrollInProgress = true;
+                try {
+                    console.log(
+                        `[MonthlyEnroll] Daily enroll scan start (${dateStr})`,
+                    );
+                    const res = await runMonthlyEnrollScan(client);
+                    // Mark done only after the scan finishes (crash-safe; enroll is
+                    // idempotent, so a full re-run is harmless).
+                    await client.db.set(MONTHLY_LAST_ENROLL_DB, dateStr);
+                    console.log(
+                        `[MonthlyEnroll] Done: ${res.processed}/${res.totalAccounts} account(s).`,
+                    );
+                } finally {
+                    monthlyEnrollInProgress = false;
+                }
             } catch (e) {
                 console.warn("[MonthlyEnroll] scheduler error:", e.message);
             }
         };
 
-        await checkMonthlySchedule();
-        await checkMonthlyEnrollSchedule();
+        // Kick off once now so a bot that starts AFTER the scheduled hour still
+        // catches that day's slot. Do NOT await — runMonthlyBatch can take a long
+        // time (quests complete in real time) and awaiting would block the rest of
+        // ready(). The per-day guard key prevents a duplicate/concurrent run.
+        checkMonthlySchedule().catch(() => {});
+        checkMonthlyEnrollSchedule().catch(() => {});
         setInterval(checkMonthlySchedule, 60 * 1000); // check every minute
         setInterval(checkMonthlyEnrollSchedule, 60 * 1000);
 

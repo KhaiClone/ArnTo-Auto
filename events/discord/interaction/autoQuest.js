@@ -130,6 +130,72 @@ async function _handleButton(client, interaction) {
 
     if (customId === "quest:check_token") {
         await interaction.deferReply({ ephemeral: true });
+
+        // When execution is delegated to the panel, read status from there.
+        if (PanelQuest.isEnabled()) {
+            const rel = (iso) =>
+                `<t:${Math.floor(new Date(iso).getTime() / 1000)}:R>`;
+            const stLabel = {
+                running: "Đang chạy",
+                done: "Đã xong",
+                stopped: "Đã dừng",
+                token_dead: "⚠️ Token lỗi",
+                error: "Lỗi",
+            };
+            const { single = [], monthly = [] } = await PanelQuest.listByRef(
+                interaction.user.id,
+            );
+            const fields = [];
+            for (const a of single.slice(0, 20)) {
+                const qs = a.quests || {};
+                const total = Object.keys(qs).length;
+                const done = Object.values(qs).filter((q) => q.state === "done").length;
+                fields.push({
+                    name: a.username,
+                    value: [
+                        `ID: \`${a.accountId}\``,
+                        "Loại: ⚡ Quest lẻ",
+                        `Trạng thái: ${stLabel[a.status] ?? a.status}`,
+                        total ? `Quest: ${done}/${total}` : `Đã xong: ${a.completedCount}`,
+                    ].join("\n"),
+                    inline: true,
+                });
+            }
+            for (const a of monthly.slice(0, 5)) {
+                fields.push({
+                    name: a.username,
+                    value: [
+                        `ID: \`${a.accountId}\``,
+                        "Loại: ♾️ Quest tháng",
+                        a.monthlyExpiresAt ? `Hạn: ${rel(a.monthlyExpiresAt)}` : "",
+                        "Lịch: Thứ 3 & Thứ 7",
+                    ]
+                        .filter(Boolean)
+                        .join("\n"),
+                    inline: true,
+                });
+            }
+            if (!fields.length)
+                return interaction.editReply({
+                    embeds: [
+                        client.embed("Bạn chưa có account nào.", {
+                            title: "Trạng thái tài khoản",
+                            color: 0xfee75c,
+                        }),
+                    ],
+                });
+            return interaction.editReply({
+                embeds: [
+                    client.embed("", {
+                        title: `Trạng thái tài khoản — ${single.length + monthly.length} account`,
+                        color: 0x5865f2,
+                        fields,
+                        timestamp: true,
+                    }),
+                ],
+            });
+        }
+
         const list = await getUserAccountsStatus(client, interaction.user.id);
         if (!list.length) {
             return interaction.editReply({

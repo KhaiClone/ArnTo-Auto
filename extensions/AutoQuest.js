@@ -2428,13 +2428,31 @@ async function activateMonthlyFromPayment(client, paymentId) {
         await cancelMonthlyPayment(client, paymentId);
         return null;
     }
-    const result = await activateMonthlySubscription(client, {
-        userId: entry.userId,
-        accountId: entry.accountId,
-        token,
-        username: entry.username,
-        months: entry.months,
-    });
+    // Delegate the monthly subscription (running) to the panel when enabled; payment
+    // stays here. Otherwise activate + run locally.
+    const PanelQuest = require("./PanelQuest");
+    let result;
+    if (PanelQuest.isEnabled()) {
+        try {
+            const r = await PanelQuest.activateMonthly({
+                token,
+                months: entry.months,
+                ref: entry.userId,
+            });
+            result = { monthlyExpiresAt: r.monthlyExpiresAt };
+        } catch (e) {
+            console.warn(`[PanelQuest] monthly activate failed, local fallback: ${e.message}`);
+        }
+    }
+    if (!result) {
+        result = await activateMonthlySubscription(client, {
+            userId: entry.userId,
+            accountId: entry.accountId,
+            token,
+            username: entry.username,
+            months: entry.months,
+        });
+    }
     await cancelMonthlyPayment(client, paymentId);
     await _notifyAccount({
         type: "monthly_activated",

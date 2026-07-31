@@ -53,6 +53,32 @@ async function start({ token, mode = "select", selectedQuestIds = [], ref }) {
     return res.data; // { accountId, status, ... }
 }
 
+async function activateMonthly({ token, months = 1, ref }) {
+    const res = await axios.post(
+        `${BASE()}/api/external/quests/monthly`,
+        { token, months, webhookUrl: WEBHOOK(), ref: ref ?? null },
+        { headers: _headers(), timeout: 20000, validateStatus: () => true },
+    );
+    if (res.status >= 400) {
+        const e = new Error(res.data?.error || `monthly failed (${res.status})`);
+        e.tokenDead = res.status === 401;
+        throw e;
+    }
+    return res.data; // { accountId, username, monthlyExpiresAt, months }
+}
+
+/** Accounts for a buyer (ref = userId): { single:[], monthly:[] } */
+async function listByRef(ref) {
+    return axios
+        .get(`${BASE()}/api/external/quests`, {
+            headers: _headers(),
+            params: { ref },
+            timeout: 10000,
+        })
+        .then((r) => r.data)
+        .catch(() => ({ single: [], monthly: [] }));
+}
+
 async function stop(accountId) {
     return axios
         .post(`${BASE()}/api/external/quests/${accountId}/stop`, {}, { headers: _headers(), timeout: 10000 })
@@ -67,4 +93,4 @@ async function status(accountId) {
         .catch(() => null);
 }
 
-module.exports = { isEnabled, preview, start, stop, status };
+module.exports = { isEnabled, preview, start, activateMonthly, listByRef, stop, status };

@@ -53,7 +53,6 @@ const {
     buildPaymentActionRow,
     buildMonthlyPaymentEmbed,
     buildMonthlyCancelRow,
-    buildQuestPanelComponents,
     cancelOrderLog,
 } = require("../../../functions/autoQuestHelpers");
 
@@ -126,6 +125,20 @@ async function _handleButton(client, interaction) {
                 "Nhập token Discord (gói tháng)",
             ),
         );
+    }
+
+    // "Cập nhật token" button — behaviour to be defined later. For now just
+    // acknowledge so the interaction doesn't error out ("This interaction failed").
+    if (customId === "quest:update_token") {
+        return interaction.reply({
+            ephemeral: true,
+            embeds: [
+                client.embed("Tính năng đang được hoàn thiện, vui lòng quay lại sau.", {
+                    title: "🔑 Cập nhật token",
+                    color: 0xfee75c,
+                }),
+            ],
+        });
     }
 
     if (customId === "quest:check_token") {
@@ -383,47 +396,9 @@ async function _handleButton(client, interaction) {
 }
 
 // ── Panel service-type menu ──────────────────────────────────────────────────────
-async function _handleMenuSelect(client, interaction) {
-    const choice = interaction.values?.[0];
-
-    // Pick the modal to show for this choice.
-    let modal;
-    if (choice === "monthly") {
-        modal = _buildTokenModal(
-            "quest:monthly_token_modal",
-            "Nhập token Discord (gói tháng)",
-        );
-    } else {
-        // "single" (quest lẻ): if the user has a dead-token account waiting, prompt
-        // a re-entry; otherwise a fresh token entry.
-        const refreshRecord = await getTokenRefreshRecord(
-            client,
-            interaction.user.id,
-        );
-        modal = refreshRecord
-            ? _buildTokenModal(
-                  `quest:refresh_modal:${refreshRecord.accountId}`,
-                  "Nhập lại token Discord",
-              )
-            : _buildTokenModal("quest:token_modal", "Nhập token Discord");
-    }
-
-    // showModal is the interaction response (needed for token entry). We cannot also
-    // interaction.update(), so reset the panel's select menu with a separate message
-    // edit — a string select keeps its last value and won't re-fire on the same
-    // option, so this lets the user pick the same option again.
-    await interaction.showModal(modal);
-    interaction.message
-        ?.edit({ components: buildQuestPanelComponents() })
-        .catch(() => {});
-}
-
 // ── Select menu handler ────────────────────────────────────────────────────────
 async function _handleSelectMenu(client, interaction) {
-    // Panel service-type menu: route to the matching token flow.
-    if (interaction.customId === "quest:menu")
-        return _handleMenuSelect(client, interaction);
-
+    // Per-account quest picker (the only select menu left on the quest flow).
     if (!interaction.customId.startsWith("quest:select:")) return;
 
     const accountId = interaction.customId.split(":")[2];

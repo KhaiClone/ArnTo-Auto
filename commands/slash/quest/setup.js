@@ -21,7 +21,7 @@ module.exports = {
             .setTitle("Auto Quest - Tự động làm nhiệm vụ Discord")
             .setDescription(
                 [
-                    "Chọn loại dịch vụ trong menu bên dưới để bắt đầu.",
+                    "Nhấn nút bên dưới để chọn dịch vụ và bắt đầu.",
                     `Cách lấy token: <#1485326007308386556>`,
                 ].join("\n"),
             )

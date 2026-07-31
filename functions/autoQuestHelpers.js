@@ -9,41 +9,39 @@ const {
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
-    StringSelectMenuBuilder,
 } = require("discord.js");
 
-// Shared builder for the quest panel components (service-type select + status
-// button). Used by /quest-setup AND to reset the select menu after a choice so the
-// same option can be picked again (a string select keeps its last value otherwise).
+// Shared builder for the quest panel components. Two rows of buttons:
+//   Row 1: Quest lẻ, Quest tháng   (the two service types → open token modals)
+//   Row 2: Kiểm tra trạng thái, Cập nhật token
+// Used by /quest-setup. Buttons are stateless, so — unlike the old string select —
+// the same button can be pressed repeatedly without needing to reset the panel.
 function buildQuestPanelComponents() {
-    const menuRow = new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-            .setCustomId("quest:menu")
-            .setPlaceholder("Chọn loại dịch vụ để bắt đầu")
-            .addOptions(
-                {
-                    label: "Quest lẻ - done nhanh",
-                    value: "single",
-                    description:
-                        "Chọn số quest cần làm, thanh toán theo từng quest.",
-                    emoji: "⚡",
-                },
-                {
-                    label: "Quest tháng - bot tự động làm quest",
-                    value: "monthly",
-                    description:
-                        "Trả phí theo tháng, bot tự làm toàn bộ quest theo lịch (Thứ 3 & Thứ 7).",
-                    emoji: "♾️",
-                },
-            ),
+    const topRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId("quest:enter_token")
+            .setLabel("Quest lẻ")
+            .setEmoji("⚡")
+            .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+            .setCustomId("quest:enter_token_monthly")
+            .setLabel("Quest tháng")
+            .setEmoji("♾️")
+            .setStyle(ButtonStyle.Primary),
     );
-    const btnRow = new ActionRowBuilder().addComponents(
+    const bottomRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId("quest:check_token")
             .setLabel("Kiểm tra trạng thái")
+            .setEmoji("📊")
+            .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+            .setCustomId("quest:update_token")
+            .setLabel("Cập nhật token")
+            .setEmoji("🔑")
             .setStyle(ButtonStyle.Secondary),
     );
-    return [menuRow, btnRow];
+    return [topRow, bottomRow];
 }
 const {
     getRunningMap,

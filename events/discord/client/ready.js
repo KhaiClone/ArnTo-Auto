@@ -1,4 +1,4 @@
-const { AttachmentBuilder } = require("discord.js");
+const { AttachmentBuilder, MessageFlags } = require("discord.js");
 const AutoBank = require("../../../extensions/AutoBank");
 const {
     restoreAccounts,
@@ -78,8 +78,12 @@ module.exports = {
                     return res.status(401).json({ error: "unauthorized" });
                 res.json({ ok: true }); // ack immediately; handle async
                 try {
-                    const { type, accountId, ref, questName, status, error } =
+                    const { type, accountId, ref, status, error, taskType } =
                         req.body || {};
+                    // Single-quest events (questEngine) send the quest name as `name`;
+                    // the monthly runner sends it as `questName`. Accept either so the
+                    // completion DM fires for both flows.
+                    const questName = req.body?.questName ?? req.body?.name;
                     const userId = ref;
                     if (!userId) return;
                     const user = await client.users.fetch(userId).catch(() => null);
@@ -89,7 +93,7 @@ module.exports = {
                             .send({
                                 embeds: [
                                     client.embed(
-                                        `Đã hoàn thành quest: **${questName}**`,
+                                        `Đã hoàn thành quest: **${questName}**${taskType ? ` [${taskType}]` : ""}`,
                                         {
                                             title: "✅ Đã hoàn thành 1 quest",
                                             color: 0x57f287,
@@ -97,6 +101,7 @@ module.exports = {
                                         },
                                     ),
                                 ],
+                                flags: MessageFlags.SuppressNotifications,
                             })
                             .catch(() => null);
                     } else if (type === "status" && status === "done") {
@@ -348,6 +353,7 @@ module.exports = {
                                     },
                                 ),
                             ],
+                            flags: MessageFlags.SuppressNotifications,
                         });
                     }
 
@@ -421,6 +427,7 @@ module.exports = {
                                     },
                                 ),
                             ],
+                            flags: MessageFlags.SuppressNotifications,
                         });
                     }
 

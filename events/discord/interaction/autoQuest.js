@@ -756,12 +756,64 @@ async function _handleMonthlyModal(client, interaction) {
         });
     }
 
+    // ── Panel-delegated monthly (execution runs on the panel) ─────────────────────
+    if (PanelQuest.isEnabled()) {
+        const { monthly = [] } = await PanelQuest.listByRef(userId);
+        const activePanel = monthly.find(
+            (m) => m.accountId === accountId && m.active,
+        );
+        // Already subscribed on the panel → just refresh the token (free, keep expiry).
+        if (activePanel) {
+            await PanelQuest.activateMonthly({ token, months: 0, ref: userId }).catch(
+                () => {},
+            );
+            return interaction.editReply({
+                embeds: [
+                    client.embed(
+                        [
+                            `Account: **${resolved.username}** (\`${accountId}\`)`,
+                            `Gói còn hạn tới: <t:${tsOf(activePanel.monthlyExpiresAt)}:f>`,
+                            "Đã cập nhật token mới cho gói hiện tại (không mất phí).",
+                        ].join("\n"),
+                        { title: "Đã cập nhật token gói tháng", color: 0x57f287, timestamp: true },
+                    ),
+                ],
+            });
+        }
+        // Owner/dev → activate 1 month free on the panel.
+        if (_isStaffFree(client, userId)) {
+            try {
+                const r = await PanelQuest.activateMonthly({
+                    token,
+                    months: 1,
+                    ref: userId,
+                });
+                return interaction.editReply({
+                    embeds: [
+                        client.embed(
+                            [
+                                `Account: **${resolved.username}** (\`${accountId}\`)`,
+                                `Hạn tới: <t:${tsOf(r.monthlyExpiresAt)}:f>`,
+                                "Đã kích hoạt gói tháng miễn phí (Staff). Bot chạy toàn bộ quest vào Thứ 3 & Thứ 7.",
+                            ].join("\n"),
+                            { title: "Đã kích hoạt gói tháng (miễn phí)", color: 0x57f287, timestamp: true },
+                        ),
+                    ],
+                });
+            } catch (e) {
+                return interaction.editReply({
+                    embeds: [client.embed(e.message, { title: "Kích hoạt thất bại" })],
+                });
+            }
+        }
+        // Non-staff → fall through to the payment flow below; on payment,
+        // activateMonthlyFromPayment delegates activation to the panel.
+    }
+
     // Already subscribed → refresh the stored token for free, keep current expiry.
-    const activeUntil = await getMonthlySubscriptionRaw(
-        client,
-        userId,
-        accountId,
-    );
+    const activeUntil = PanelQuest.isEnabled()
+        ? null
+        : await getMonthlySubscriptionRaw(client, userId, accountId);
     if (activeUntil) {
         await activateMonthlySubscription(client, {
             userId,

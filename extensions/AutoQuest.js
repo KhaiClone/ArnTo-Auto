@@ -1205,9 +1205,13 @@ function _expireAccount(client, userId, accountId) {
 async function setAllowedQuests(client, userId, accountId, questIds) {
     const entry = getRunningMap(userId).get(accountId);
     if (!entry) return false;
-    entry.allowedQuestIds = new Set(
-        (questIds ?? []).map((id) => String(id)).filter(Boolean),
-    );
+    // Append (union) the incoming quests to whatever is already allowed, instead of
+    // replacing. This lets a user buy more quests mid-run (e.g. 6 then +3 = 9 in one
+    // session) without dropping the quests still running from the earlier order.
+    const incoming = (questIds ?? []).map((id) => String(id)).filter(Boolean);
+    if (entry.allowedQuestIds instanceof Set)
+        for (const id of incoming) entry.allowedQuestIds.add(id);
+    else entry.allowedQuestIds = new Set(incoming);
     const selectedIds = [...entry.allowedQuestIds];
     if (selectedIds.length > 0) {
         // Persist the account record and its selected quest IDs in a single
@@ -1242,8 +1246,20 @@ async function getSelectableQuests(userId, accountId) {
     // they still enter the run loop's `potential` set and actually run.
     const quests = await entry.completer.fetchQuests();
     if (!quests.length) return [];
+    // Exclude quests already selected/running for this account so re-entering the
+    // token to buy MORE quests only offers new ones (no paying twice for a running
+    // quest).
+    const already =
+        entry.allowedQuestIds instanceof Set
+            ? entry.allowedQuestIds
+            : new Set();
     return quests
-        .filter((q) => !_isCompleted(q) && _isCompletable(q))
+        .filter(
+            (q) =>
+                !_isCompleted(q) &&
+                _isCompletable(q) &&
+                !already.has(String(q.id)),
+        )
         .map((q) => ({
             id: q.id,
             name: _getQuestName(q),
@@ -1404,7 +1420,19 @@ async function _runLoop(
                 for (const q of actionable) {
                     if (abortController.stopped) break;
                     await completer.processQuest(q);
-                    completedNames.push(_getQuestName(q));
+                    const qName = _getQuestName(q);
+                    completedNames.push(qName);
+                    // DM the user immediately for THIS quest. Per-quest (not batch)
+                    // so a restart mid-order doesn't drop earlier quests from the
+                    // notification — each finished quest is reported as it completes.
+                    await _notifyAccount({
+                        type: "quest_completed_one",
+                        userId,
+                        accountId,
+                        username,
+                        questName: qName,
+                        taskType: _getTaskType(q),
+                    });
                     const e2 = getRunningMap(userId).get(accountId);
                     if (e2) {
                         e2.completedCount++;

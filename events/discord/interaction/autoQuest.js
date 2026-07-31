@@ -490,9 +490,28 @@ async function _handleModal(client, interaction) {
         );
         await interaction.deferReply({ ephemeral: true });
 
+        const resolved = await resolveDiscordAccount(token);
+        if (!resolved.ok) {
+            return interaction.editReply({
+                embeds: [
+                    client.embed(resolved.reason, {
+                        title: "Kích hoạt thất bại",
+                    }),
+                ],
+            });
+        }
+
+        // Account already running → let the user pick MORE quests and add them to
+        // the current run (paid quests are appended, not replaced) — no need to wait
+        // for the earlier batch to finish before buying more.
+        if (getRunningMap(interaction.user.id).get(resolved.accountId)) {
+            return _replyWithQuestSelection(client, interaction, resolved);
+        }
+
+        // Not running → start it (fresh entry, or resume a stored account).
         const result = await startAccount(client, interaction.user.id, token, {
+            resolvedAccount: resolved,
             allowRestartIfRunning: false,
-            rejectDuplicateStoredAccount: true,
             notifyStarted: true,
             forceNotifyQuestBatch: true,
             source: "activate",
@@ -502,20 +521,6 @@ async function _handleModal(client, interaction) {
         });
 
         if (!result.ok) {
-            // If account is already running, just reopen quest selection
-            if (/đang chạy rồi/i.test(String(result.reason ?? ""))) {
-                const resolved = await resolveDiscordAccount(token);
-                if (
-                    resolved?.ok &&
-                    getRunningMap(interaction.user.id).get(resolved.accountId)
-                ) {
-                    return _replyWithQuestSelection(
-                        client,
-                        interaction,
-                        resolved,
-                    );
-                }
-            }
             return interaction.editReply({
                 embeds: [
                     client.embed(result.reason, {

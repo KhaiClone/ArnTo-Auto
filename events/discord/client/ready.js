@@ -271,6 +271,28 @@ module.exports = {
                         });
                     }
 
+                    // Per-quest completion DM (quest lẻ): fires as each quest finishes
+                    // so a restart mid-order never drops earlier quests from the DMs.
+                    if (type === "quest_completed_one") {
+                        return user.send({
+                            embeds: [
+                                client.embed(
+                                    [
+                                        `Account: **${username}** (\`${accountId}\`)`,
+                                        `Đã hoàn thành quest: **${questName}**${taskType ? ` [${taskType}]` : ""}`,
+                                    ].join("\n"),
+                                    {
+                                        title: "✅ Đã hoàn thành 1 quest",
+                                        color: 0x57f287,
+                                        timestamp: true,
+                                    },
+                                ),
+                            ],
+                        });
+                    }
+
+                    // Batch completion now only updates the staff order log — the
+                    // per-quest DMs above replace the (previously batch) user DM.
                     if (type === "quest_batch_completed") {
                         await editOrderLog(
                             client,
@@ -279,25 +301,7 @@ module.exports = {
                             username,
                             completedQuestNames,
                         );
-                        return user.send({
-                            embeds: [
-                                client.embed(
-                                    [
-                                        `Account: **${username}** (\`${accountId}\`)`,
-                                        `Đã xong ${completedQuestNames.length} quest.`,
-                                        ...completedQuestNames.map(
-                                            (n) =>
-                                                `- ${typeof n === "string" ? n : n.name}`,
-                                        ),
-                                    ].join("\n"),
-                                    {
-                                        title: "Đã xử lý xong quest",
-                                        color: 0x57f287,
-                                        timestamp: true,
-                                    },
-                                ),
-                            ],
-                        });
+                        return;
                     }
 
                     if (type === "account_started") {

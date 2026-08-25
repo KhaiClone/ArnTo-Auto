@@ -649,7 +649,74 @@ async function _handleModal(client, interaction) {
             });
         }
 
-        const result = await startAccount(client, interaction.user.id, token, {
+        // ── Monthly subscribers ──────────────────────────────────────────────
+        // A monthly subscription's quest run does NOT use the local per-batch
+        // loop that startAccount() revives — it runs on the panel (PanelQuest)
+        // when enabled, and/or via the local monthly scheduler, each holding its
+        // OWN copy of the token. Refreshing only the local per-batch token (as the
+        // single-quest flow below does) leaves those with the dead token, so the
+        // next scheduled run fails and re-flags the account — which is why, before
+        // this branch, only the "Mua/nhập gói tháng" button actually re-installed
+        // the token. Push the new token to wherever the monthly run reads it so a
+        // single "Cập nhật token" press fixes monthly accounts too.
+        const userId = interaction.user.id;
+        let panelMonthlyActive = false;
+        if (PanelQuest.isEnabled()) {
+            const { monthly = [] } = await PanelQuest.listByRef(userId).catch(
+                () => ({ monthly: [] }),
+            );
+            panelMonthlyActive = monthly.some(
+                (m) => m.accountId === accountId && m.active,
+            );
+            if (panelMonthlyActive) {
+                try {
+                    await PanelQuest.activateMonthly({
+                        token,
+                        months: 0,
+                        ref: userId,
+                    });
+                } catch (e) {
+                    return interaction.editReply({
+                        embeds: [
+                            client.embed(e.message, {
+                                title: "Kích hoạt thất bại",
+                            }),
+                        ],
+                    });
+                }
+            }
+        }
+        const localMonthlyActive = await getMonthlySubscriptionRaw(
+            client,
+            userId,
+            accountId,
+        ).catch(() => null);
+        if (panelMonthlyActive || localMonthlyActive) {
+            // Refresh the local monthly record's token too (keeps the current
+            // expiry, drops the dead-token flag) so the status panel and any local
+            // monthly scheduler stop seeing a dead token.
+            await activateMonthlySubscription(client, {
+                userId,
+                accountId,
+                token,
+                username: resolved.username,
+                months: 0,
+            }).catch(() => {});
+            return interaction.editReply({
+                embeds: [
+                    client.embed(
+                        "Đã cập nhật token mới cho gói tháng (không mất phí). Bot sẽ tiếp tục chạy quest theo lịch.",
+                        {
+                            title: "Token đã được cập nhật (gói tháng)",
+                            color: 0x57f287,
+                            timestamp: true,
+                        },
+                    ),
+                ],
+            });
+        }
+
+        const result = await startAccount(client, userId, token, {
             resolvedAccount: resolved,
             allowRestartIfRunning: false,
             addedAt: refreshRecord.addedAt,

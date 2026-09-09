@@ -299,12 +299,23 @@ async function handlePanelEvent(client, event) {
     };
 
     switch (type) {
-        case "sent":
+        // Gửi xong là xong đơn — không còn vòng xác minh tự động nữa.
+        case "sent": {
+            const isHouse = event.badgeKey === "hypesquad";
             await send(
-                `📤 Đã gửi xong dữ liệu cho mốc **${label}** (${event.sent}/${event.total}).\n` +
-                    `Badge sẽ hiện sau khoảng 1 ngày. Bot sẽ nhắn lại khi xác minh xong.`,
+                `🎉 **Đơn hoàn tất!** ${BADGE_VI(event.badgeKey)} · **${event.tierName ?? label}**\n` +
+                    (isHouse
+                        ? "Nhà HypeSquad đã đổi, bạn kiểm tra trên profile là thấy ngay."
+                        : `Đã gửi đủ dữ liệu. Badge sẽ hiện trên profile sau khoảng **1 ngày** — ` +
+                          `đây là chu kỳ xử lý của Discord, không phải đơn chưa xong.\n` +
+                          `_Badge này chỉ hiển thị với người xem có Nitro._`),
+            );
+            await _log(
+                client,
+                `✅ Badge hoàn tất · \`${orderId}\` · <@${userId}> · ${BADGE_VI(event.badgeKey)} ${event.tierName ?? ""}`,
             );
             break;
+        }
 
         case "verified": {
             // HypeSquad hiện với mọi người xem; badge tiered thì chỉ người có

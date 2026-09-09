@@ -35,17 +35,12 @@ module.exports = {
         23,
         Math.max(0, parseInt(process.env.MONTHLY_ENROLL_HOUR || "3") || 3),
     ),
-    hypeSquadPrice: Math.max(
-        100,
-        parseInt(process.env.HYPESQUAD_PRICE || "5000") || 5000,
-    ),
 
     // ── Discord channels ───────────────────────────────────────────────────────
     vietqrChannelId: process.env.VIETQR_CHANNEL_ID || "",
     logWebhookUrl: process.env.LOG_WEBHOOK_URL || "",
     questOrderLogChannelId: process.env.QUEST_ORDER_LOG_CHANNEL_ID || "",
-    hypeSquadOrderLogChannelId:
-        process.env.HYPESQUAD_ORDER_LOG_CHANNEL_ID || "",
     robuxOrderLogChannelId: process.env.ROBUX_ORDER_LOG_CHANNEL_ID || "",
     robuxQueueChannelId: process.env.ROBUX_QUEUE_CHANNEL_ID || "",
+    badgeOrderLogChannelId: process.env.BADGE_ORDER_LOG_CHANNEL_ID || "",
 };

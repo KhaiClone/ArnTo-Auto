@@ -4,6 +4,8 @@ const {
     EmbedBuilder,
 } = require("discord.js");
 
+const pricing = require("../../../functions/pricing");
+
 module.exports = {
     deferReply: {},
     data: new SlashCommandBuilder()
@@ -12,9 +14,9 @@ module.exports = {
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     async execute(client, interaction) {
-        const s = client.configs.settings;
-        const priceStr = s.questPricePerItem.toLocaleString("vi-VN");
-        const monthlyStr = s.monthlyQuestPrice.toLocaleString("vi-VN");
+        // Giá lấy từ panel (/pricing), tự lùi về .env khi panel không với tới.
+        const priceStr = (await pricing.questPricePerItem(client)).toLocaleString("vi-VN");
+        const monthlyStr = (await pricing.questMonthlyPrice(client)).toLocaleString("vi-VN");
 
         const embed = new EmbedBuilder()
             .setColor(client.funcs.hexToInt(client.configs.embed.color))

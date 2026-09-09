@@ -8,6 +8,7 @@
  */
 
 const axios = require("axios");
+const pricing = require("../functions/pricing");
 const { Buffer } = require("buffer");
 const {
     createCipheriv,
@@ -1930,7 +1931,7 @@ async function createQuestPayment(client, { userId, accountId, questIds }) {
         ...new Set((questIds ?? []).map((id) => String(id)).filter(Boolean)),
     ];
     const amount =
-        selectedQuestIds.length * client.configs.settings.questPricePerItem;
+        selectedQuestIds.length * (await pricing.questPricePerItem(client));
     const transferCode = await _generateUniqueTransferCode(client);
 
     const payment = {
@@ -2336,7 +2337,7 @@ async function createMonthlyPayment(
     { userId, accountId, token, username, months = 1 },
 ) {
     const m = Math.max(1, parseInt(months, 10) || 1);
-    const amount = m * client.configs.settings.monthlyQuestPrice;
+    const amount = m * (await pricing.questMonthlyPrice(client));
     const transferCode = await _generateUniqueMonthlyCode(client);
     const secret = client.configs.settings.token;
     const paymentId = _newPaymentId();

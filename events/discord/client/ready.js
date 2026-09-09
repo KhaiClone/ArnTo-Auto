@@ -148,6 +148,23 @@ module.exports = {
                 }
             });
 
+
+            app.post("/api/badge-event", async (req, res) => {
+                const key = process.env.PANEL_API_KEY;
+                if (!key) return res.status(503).json({ error: "disabled" });
+                if (req.header("x-api-key") !== key)
+                    return res.status(401).json({ error: "unauthorized" });
+                res.json({ ok: true }); // ack immediately; handle async
+                try {
+                    const {
+                        handlePanelEvent,
+                    } = require("../../../extensions/AutoBadge");
+                    await handlePanelEvent(client, req.body || {});
+                } catch (e) {
+                    console.warn(`[badge-event] handler error: ${e.message}`);
+                }
+            });
+
             app.listen(client.configs.settings.port, () =>
                 console.log(
                     `Server listening on port ${client.configs.settings.port}`,
@@ -225,16 +242,16 @@ module.exports = {
             },
         );
 
-        // Register recovery handler for HypeSquad payments
+        // Register recovery handler for Auto Badge payments
         client.autoBank.registerMissedHandler(
-            "hs_payment",
+            "badge_payment",
             async (client, entry) => {
                 const {
-                    markHsPaymentPaid,
-                    runBadgeChange,
-                } = require("../../../extensions/AutoHypeSquad");
-                await markHsPaymentPaid(client, entry.context.paymentId);
-                await runBadgeChange(client, entry.context);
+                    markPaid,
+                    runOrder,
+                } = require("../../../extensions/AutoBadge");
+                await markPaid(client, entry.context.paymentId);
+                await runOrder(client, entry.context);
             },
         );
 
@@ -535,13 +552,13 @@ module.exports = {
                             ),
                     );
 
-                    // ── AutoHypeSquad ──────────────────────────────────────────
-                } else if (handler === "hs_payment") {
+                    // ── AutoBadge ──────────────────────────────────────────────
+                } else if (handler === "badge_payment") {
                     const {
-                        markHsPaymentPaid,
-                        runBadgeChange,
-                    } = require("../../../extensions/AutoHypeSquad");
-                    const paid = await markHsPaymentPaid(client, paymentId);
+                        markPaid,
+                        runOrder,
+                    } = require("../../../extensions/AutoBadge");
+                    const paid = await markPaid(client, paymentId);
                     if (paid) {
                         const user = await client.users
                             .fetch(userId)
@@ -554,7 +571,7 @@ module.exports = {
                                             [
                                                 `Mã đơn: \`${paymentId}\``,
                                                 `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
-                                                "Bot phát hiện thanh toán khi khởi động lại. Đang tiến hành đổi badge...",
+                                                "Bot phát hiện thanh toán khi khởi động lại. Đang tiến hành xử lý badge...",
                                             ].join("\n"),
                                             {
                                                 title: "Đã xác nhận thanh toán (khôi phục)",
@@ -564,7 +581,7 @@ module.exports = {
                                     ],
                                 })
                                 .catch(() => null);
-                        await runBadgeChange(client, entry.context);
+                        await runOrder(client, entry.context);
                     }
 
                     // ── AutoRobux ──────────────────────────────────────────────
@@ -643,8 +660,8 @@ module.exports = {
                         })
                         .catch(() => null);
 
-                    // ── AutoHypeSquad ──────────────────────────────────────────
-                } else if (handler === "hs_payment") {
+                    // ── AutoBadge ──────────────────────────────────────────────
+                } else if (handler === "badge_payment") {
                     await user
                         .send({
                             embeds: [
@@ -652,7 +669,7 @@ module.exports = {
                                     [
                                         `Mã đơn: \`${paymentId}\``,
                                         `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
-                                        "QR HypeSquad đã hết hạn. Hãy tạo đơn mới.",
+                                        "QR Auto Badge đã hết hạn. Hãy tạo đơn mới.",
                                     ].join("\n"),
                                     {
                                         title: "QR thanh toán đã hết hạn",
@@ -754,11 +771,13 @@ module.exports = {
             }
             try {
                 const {
-                    expireStaleHsPayments,
-                } = require("../../../extensions/AutoHypeSquad");
-                await expireStaleHsPayments(client);
+                    expireStale,
+                    purgeExpiredSessions,
+                } = require("../../../extensions/AutoBadge");
+                await expireStale(client);
+                await purgeExpiredSessions(client);
             } catch (e) {
-                console.warn("[maintenance] hypesquad payments:", e.message);
+                console.warn("[maintenance] badge payments:", e.message);
             }
             try {
                 await expireStaleMonthlyPayments(client);

@@ -40,6 +40,7 @@ const {
     SESSION_TTL,
 } = require("../../../extensions/AutoBadge");
 const normalizeToken = require("../../../functions/normalizeDiscordTokenInput");
+const emojis = require("../../../configs/badgeEmojis");
 
 const UNIT_VI = (u) =>
     u === "hours" ? "giờ" : u === "house" ? "nhà" : "game";
@@ -98,6 +99,7 @@ async function _badgeSelect(client, sid, hasNitro) {
                 badges.map((b) => ({
                     label: b.label,
                     value: b.key,
+                    emoji: emojis.badgeEmoji(b.key),
                     description:
                         b.key === "game_time"
                             ? "Số giờ chơi game tích luỹ"
@@ -129,6 +131,7 @@ async function _tierSelect(client, sid, badgeKey, hasNitro, values, currentHouse
                     ? t.name
                     : `${t.name} — ${fmt(t.threshold)} ${UNIT_VI(t.unit)}`,
                 value: t.key,
+                emoji: emojis.tierEmoji(badgeKey, t.key),
                 description: already
                     ? isChoice
                         ? "Bạn đang ở nhà này rồi"

@@ -8,15 +8,25 @@ const {
 } = require("discord.js");
 
 const pricing = require("../../../functions/pricing");
+const emojis = require("../../../configs/badgeEmojis");
 
-const UNIT_VI = (u) => (u === "hours" ? "giờ" : "game");
+// Ảnh banner của panel. Để trống thì embed không có ảnh.
+const BANNER_URL = process.env.BADGE_PANEL_IMAGE || "";
+
+const UNIT_VI = (u) => (u === "hours" ? "giờ" : u === "house" ? "nhà" : "game");
 const fmt = (n) => Number(n).toLocaleString("vi-VN");
+
+const BADGE_TITLE = {
+    game_time: "Game Time - Giờ chơi game",
+    game_variety: "Game Variety - Số game đã chơi",
+    hypesquad: "HypeSquad - Đổi nhà",
+};
 
 module.exports = {
     deferReply: {},
     data: new SlashCommandBuilder()
         .setName("badge-setup")
-        .setDescription("Gửi panel Auto Badge Game vào kênh hiện tại")
+        .setDescription("Gửi panel Auto Badge vào kênh hiện tại")
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     async execute(client, interaction) {
@@ -28,49 +38,56 @@ module.exports = {
             });
         }
 
-        // Giá hiển thị trên panel là giá gốc (khách có Nitro). Khách không Nitro
-        // thấy giá đã phụ thu ở bước chọn mốc, sau khi bot biết token của họ.
-        const fields = [];
+        // Giá hiển thị là giá gốc (khách có Nitro). Khách không Nitro thấy giá đã
+        // phụ thu ở bước chọn mốc, sau khi bot biết token của họ.
+        const lines = [];
+        // Cùng một emoji hai bên tiêu đề, như panel Gift Badge.
+        const crown = emojis.badgeTag(badges[0].key);
+        lines.push(`# ${crown} Auto Badge Discord ${crown}`);
+
         for (const b of badges) {
             const tiers = await pricing.badgeTiers(client, b.key, { hasNitro: true });
-            fields.push({
-                name: b.label + (b.kind === "choice" ? " — ăn ngay" : ""),
-                value:
-                    tiers
-                        .map((t) =>
-                            t.threshold == null
-                                ? `\`${t.name}\` · **${fmt(t.finalPrice)}đ**`
-                                : `\`${t.name}\` — ${fmt(t.threshold)} ${UNIT_VI(t.unit)} · **${fmt(t.finalPrice)}đ**`,
-                        )
-                        .join("\n") || "—",
-                inline: false,
-            });
+            if (!tiers.length) continue;
+            lines.push(`### ${emojis.badgeTag(b.key)} ${BADGE_TITLE[b.key] ?? b.label}`);
+            for (const t of tiers) {
+                const icon = emojis.tierTag(b.key, t.key);
+                // Giữ nhịp hai chỗ in đậm như mẫu (tên - giá); mốc để thường.
+                const amount =
+                    t.threshold == null ? "" : ` - ${fmt(t.threshold)} ${UNIT_VI(t.unit)}`;
+                lines.push(
+                    `- ${icon} **${t.name}**${amount} - **${fmt(t.finalPrice)} VNĐ**`.replace(
+                        /\s{2,}/g,
+                        " ",
+                    ),
+                );
+            }
         }
+
+        const hasTiered = badges.some((b) => b.kind !== "choice");
+        const hasChoice = badges.some((b) => b.kind === "choice");
+
+        lines.push("### ⚠️ Lưu ý ⚠️");
+        if (hasTiered) {
+            lines.push(
+                "- **Game Time** và **Game Variety** chỉ hiển thị với người xem có **Nitro**. Không có Nitro thì bạn không tự thấy badge của mình, bot sẽ gửi thông tin xác minh thay.",
+                "- Hai badge trên: acc **không có Nitro** phải tự khai tình trạng hiện tại và chịu phụ phí. Mua nhầm mốc **đã đạt từ trước** thì **không hoàn tiền**.",
+                "- Badge lên sau khoảng **1 ngày**, bot nhắn xác nhận khi xong.",
+            );
+        }
+        if (hasChoice) {
+            lines.push(
+                "- **HypeSquad** thì ai cũng thấy, **không phụ phí**, không phải khai gì và **ăn ngay**. Bot tự đọc nhà bạn đang ở và ẩn khỏi danh sách.",
+            );
+        }
+        lines.push(
+            "- Cách lấy token: <#1485326007308386556>",
+            "### Liên hệ trực tiếp với shop qua <#1246028759597846650>",
+        );
 
         const embed = new EmbedBuilder()
             .setColor(client.funcs.hexToInt(client.configs.embed.color))
-            .setTitle("Auto Badge — badge Discord tự động")
-            .setDescription(
-                [
-                    "**Game Time** (giờ chơi game) · **Game Variety** (số game đã chơi) · **HypeSquad** (đổi nhà).",
-                    "",
-                    "**Quy trình:**",
-                    "1) Bấm `Mua badge` và dán token Discord",
-                    "2) Chọn loại badge và mốc muốn đạt",
-                    "3) Thanh toán qua QR",
-                    "4) HypeSquad lên **ngay lập tức**; Game Time / Game Variety lên sau khoảng **1 ngày** — bot nhắn xác nhận khi xong",
-                ].join("\n"),
-            )
-            .addFields(...fields)
-            .addFields({
-                name: "⚠️ Lưu ý quan trọng",
-                value: [
-                    "• **Game Time / Game Variety** chỉ hiển thị với người xem **có Nitro**. Không có Nitro thì bạn không tự nhìn thấy badge của mình — bot gửi thông tin xác minh thay.",
-                    "• Hai badge đó: tài khoản **không có Nitro** phải tự khai tình trạng hiện tại và chịu phụ phí. Mua nhầm mốc **đã đạt từ trước** thì **không hoàn tiền**.",
-                    "• **HypeSquad** thì ai cũng thấy, không phụ phí, không phải khai gì — bot đọc được nhà bạn đang ở và ẩn sẵn khỏi danh sách.",
-                ].join("\n"),
-                inline: false,
-            });
+            .setDescription(lines.join("\n"));
+        if (BANNER_URL) embed.setImage(BANNER_URL);
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()

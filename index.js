@@ -1,4 +1,6 @@
+require("./handlers/backup").restore(); // phải ở TRƯỚC dotenv
 require("dotenv").config();
+require("./handlers/backup").start();
 
 const discord = require("discord.js");
 const { Partials, Options, GatewayIntentBits } = discord;

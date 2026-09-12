@@ -3,3 +3,6 @@ package-lock.json
 json.sqlite
 .env
 .vscode
+restore/
+backup-tmp/
+*.bak-*

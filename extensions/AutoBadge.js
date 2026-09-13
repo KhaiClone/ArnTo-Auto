@@ -246,7 +246,7 @@ async function runOrder(client, context) {
             await user
                 .send(
                     `✅ Đã nhận thanh toán. Đơn \`${order.orderId}\` đang được xử lý.\n` +
-                        `Badge thường lên sau khoảng 1 ngày — bot sẽ nhắn lại khi xác minh xong.`,
+                        `Bot sẽ nhắn lại ngay khi gửi xong.`,
                 )
                 .catch(() => null);
         }
@@ -299,7 +299,8 @@ async function handlePanelEvent(client, event) {
     };
 
     switch (type) {
-        // Gửi xong là xong đơn — không còn vòng xác minh tự động nữa.
+        // Gửi xong là xong đơn. Panel không đọc lại badge sau đó nữa nên
+        // "sent" là sự kiện kết thúc duy nhất cho mọi loại badge.
         case "sent": {
             const isHouse = event.badgeKey === "hypesquad";
             await send(
@@ -316,30 +317,6 @@ async function handlePanelEvent(client, event) {
             );
             break;
         }
-
-        case "verified": {
-            // HypeSquad hiện với mọi người xem; badge tiered thì chỉ người có
-            // Nitro mới thấy — nói rõ để khách không Nitro khỏi tưởng bị lừa.
-            const isHouse = event.proof?.badge === "hypesquad";
-            await send(
-                `🎉 Hoàn tất! Badge **${BADGE_VI(event.proof?.badge)}** ` +
-                    (isHouse
-                        ? `đã đổi sang nhà **${event.proof?.tierName ?? label}**.`
-                        : `đã lên mốc **${event.proof?.currentTier ?? label}**.\n` +
-                          `\`${event.proof?.infoLabel ?? `${event.proof?.value} ${UNIT_VI(event.proof?.unit)}`}\`` +
-                          `\n_Lưu ý: badge này chỉ hiển thị với người xem có Nitro._`),
-            );
-            await _log(client, `✅ Badge xong · \`${orderId}\` · <@${userId}> · ${event.proof?.infoLabel ?? ""}`);
-            break;
-        }
-
-        case "verify_failed":
-            await send(
-                `⚠️ Đơn **${label}** đã gửi nhưng chưa đạt mốc khi kiểm tra lại ` +
-                    `(${event.proof?.value ?? "?"}/${payment?.threshold ?? "?"}). Admin sẽ xử lý.`,
-            );
-            await _log(client, `⚠️ Badge xác minh hụt · \`${orderId}\` · <@${userId}>`);
-            break;
 
         case "forfeited":
             await send(

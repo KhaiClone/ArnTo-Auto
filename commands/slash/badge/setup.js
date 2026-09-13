@@ -71,7 +71,7 @@ module.exports = {
             lines.push(
                 "- **Game Time** và **Game Variety** chỉ hiển thị với người xem có **Nitro**. Không có Nitro thì bạn không tự thấy badge của mình, bot sẽ gửi thông tin xác minh thay.",
                 "- Hai badge trên: acc **không có Nitro** phải tự khai tình trạng hiện tại và chịu phụ phí. Mua nhầm mốc **đã đạt từ trước** thì **không hoàn tiền**.",
-                "- Badge lên sau khoảng **1 ngày**, bot nhắn xác nhận khi xong.",
+                "- Bot nhắn khi gửi xong. Badge hiện trên profile sau khoảng **1 ngày** — đó là chu kỳ xử lý của Discord.",
             );
         }
         if (hasChoice) {

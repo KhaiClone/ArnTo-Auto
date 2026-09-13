@@ -71,11 +71,11 @@ module.exports = {
             lines.push(
                 "- **Game Time** và **Game Variety** chỉ người xem có **Nitro** mới thấy.",
                 "- Acc không Nitro: tự khai mốc đang có, chịu phụ phí. Mua mốc **đã đạt rồi** thì **không hoàn tiền**.",
-                "- Badge lên sau **~1 ngày** (chu kỳ của Discord). Bot nhắn ngay khi gửi xong.",
+                "- Badge lên sau **~2 ngày**. Bot nhắn ngay khi gửi xong.",
             );
         }
         if (hasChoice) {
-            lines.push("- **HypeSquad**: ai cũng thấy, không phụ phí, **ăn ngay**.");
+            lines.push("- **HypeSquad**: có thể thay đổi giữa các màu.");
         }
         lines.push(
             "- Cách lấy token: <#1485326007308386556>",

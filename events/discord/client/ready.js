@@ -679,6 +679,15 @@ module.exports = {
                             ],
                         })
                         .catch(() => null);
+                    // Lật log đơn sang "hết hạn" ngay, thay vì đợi vòng quét định kỳ.
+                    {
+                        const {
+                            getPaymentById,
+                        } = require("../../../extensions/AutoBadge");
+                        const badgeLog = require("../../../functions/autoBadgeHelpers");
+                        const pm = await getPaymentById(client, paymentId);
+                        if (pm) await badgeLog.updateOrderLog(client, pm, "expired");
+                    }
 
                     // ── AutoRobux ──────────────────────────────────────────────
                 } else if (handler === "rb_payment") {

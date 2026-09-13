@@ -30,6 +30,7 @@ const {
 
 const PanelBadge = require("../../../extensions/PanelBadge");
 const pricing = require("../../../functions/pricing");
+const badgeLog = require("../../../functions/autoBadgeHelpers");
 const {
     createPayment,
     cancelPayment,
@@ -42,16 +43,8 @@ const {
 const normalizeToken = require("../../../functions/normalizeDiscordTokenInput");
 const emojis = require("../../../configs/badgeEmojis");
 
-const UNIT_VI = (u) =>
-    u === "hours" ? "giờ" : u === "house" ? "nhà" : "game";
-const fmt = (n) => Number(n).toLocaleString("vi-VN");
-const BADGE_VI = (k) =>
-    ({
-        game_time: "Game Time",
-        game_variety: "Game Variety",
-        hypesquad: "HypeSquad",
-        streaming: "Streaming",
-    })[k] ?? k;
+// Nhãn dùng chung với log đơn — một chỗ sửa, mọi nơi đổi theo.
+const { UNIT_VI, BADGE_VI, fmt } = badgeLog;
 
 // ── Session token ────────────────────────────────────────────────────────────────
 
@@ -398,6 +391,8 @@ module.exports = {
                     });
                 }
                 await cancelPayment(client, paymentId);
+                // cancelPayment xoá hẳn bản ghi, nên phải sửa log bằng bản đã đọc ở trên.
+                if (payment) await badgeLog.updateOrderLog(client, payment, "cancelled", "Khách tự huỷ.");
                 return interaction.editReply({
                     content: "Đã huỷ đơn.",
                     embeds: [],

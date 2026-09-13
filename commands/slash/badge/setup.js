@@ -69,15 +69,13 @@ module.exports = {
         lines.push("### ⚠️ Lưu ý ⚠️");
         if (hasTiered) {
             lines.push(
-                "- **Game Time** và **Game Variety** chỉ hiển thị với người xem có **Nitro**. Không có Nitro thì bạn không tự thấy badge của mình, bot sẽ gửi thông tin xác minh thay.",
-                "- Hai badge trên: acc **không có Nitro** phải tự khai tình trạng hiện tại và chịu phụ phí. Mua nhầm mốc **đã đạt từ trước** thì **không hoàn tiền**.",
-                "- Bot nhắn khi gửi xong. Badge hiện trên profile sau khoảng **1 ngày** — đó là chu kỳ xử lý của Discord.",
+                "- **Game Time** và **Game Variety** chỉ người xem có **Nitro** mới thấy.",
+                "- Acc không Nitro: tự khai mốc đang có, chịu phụ phí. Mua mốc **đã đạt rồi** thì **không hoàn tiền**.",
+                "- Badge lên sau **~1 ngày** (chu kỳ của Discord). Bot nhắn ngay khi gửi xong.",
             );
         }
         if (hasChoice) {
-            lines.push(
-                "- **HypeSquad** thì ai cũng thấy, **không phụ phí**, không phải khai gì và **ăn ngay**. Bot tự đọc nhà bạn đang ở và ẩn khỏi danh sách.",
-            );
+            lines.push("- **HypeSquad**: ai cũng thấy, không phụ phí, **ăn ngay**.");
         }
         lines.push(
             "- Cách lấy token: <#1485326007308386556>",

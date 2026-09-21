@@ -82,7 +82,6 @@ async function _deliverQuestNotice(client, userId, embed) {
         const channel = await _questNotifyChannel(client);
         if (channel) {
             await channel.send({
-                content: `<@${userId}>`,
                 embeds: [embed],
                 allowedMentions: { users: [userId] },
                 flags: MessageFlags.SuppressNotifications,
@@ -104,7 +103,8 @@ async function _deliverQuestNotice(client, userId, embed) {
     }
 }
 
-const planLabel = (plan) => (plan === "monthly" ? "♾️ Quest tháng" : "⚡ Quest lẻ");
+const planLabel = (plan) =>
+    plan === "monthly" ? "♾️ Quest tháng" : "⚡ Quest lẻ";
 const accountLine = (username, accountId) =>
     username ? `**${username}**` : `\`${accountId ?? "?"}\``;
 
@@ -253,7 +253,13 @@ async function editOrderLog(
     }
 }
 
-async function editOrderLogPaid(client, userId, accountId, username, questCount) {
+async function editOrderLogPaid(
+    client,
+    userId,
+    accountId,
+    username,
+    questCount,
+) {
     if (!client.configs.settings.questOrderLogChannelId) return;
     const key = `${userId}:${accountId}`;
     const entry =
@@ -353,7 +359,8 @@ async function unlockPaymentIfPaid(client, payment) {
     // completions back. Payment itself stays here in arnto-auto.
     if (PanelQuest.isEnabled()) {
         const token = activation?.token;
-        const ids = activation?.selectedQuestIds ?? payment.selectedQuestIds ?? [];
+        const ids =
+            activation?.selectedQuestIds ?? payment.selectedQuestIds ?? [];
         if (token) {
             try {
                 stopAccount(payment.userId, payment.accountId);
@@ -363,7 +370,8 @@ async function unlockPaymentIfPaid(client, payment) {
                     selectedQuestIds: ids,
                     ref: payment.userId,
                 });
-                if (activation) await removeActivationByPaymentId(client, payment.id);
+                if (activation)
+                    await removeActivationByPaymentId(client, payment.id);
                 return "unlocked";
             } catch (err) {
                 if (err.tokenDead) {
@@ -531,7 +539,11 @@ function buildMonthlyPaymentEmbed(client, payment, note) {
         color: 0x9b59b6,
         description: note || null,
         fields: [
-            { name: "Mã đơn", value: `\`${payment.paymentId}\``, inline: false },
+            {
+                name: "Mã đơn",
+                value: `\`${payment.paymentId}\``,
+                inline: false,
+            },
             {
                 name: "Số tháng",
                 value: `**${payment.months}** tháng`,

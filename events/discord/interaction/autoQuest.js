@@ -30,6 +30,7 @@ const {
     getOpenMonthlyPayment,
     getMonthlyPaymentById,
     getMonthlySubscriptionRaw,
+    getUserMonthlyAccountIds,
     cancelMonthlyPayment,
     activateMonthlySubscription,
     getUserAccountsStatus,
@@ -37,6 +38,33 @@ const {
     stopAccount,
 } = require("../../../extensions/AutoQuest");
 const PanelQuest = require("../../../extensions/PanelQuest");
+
+/**
+ * Accounts this user may re-enter a token for WITHOUT anything having flagged them
+ * locally. Two cases the local `needsTokenRefresh` flag never covers, because the
+ * panel — not this bot — runs those accounts and holds their token:
+ *   • a monthly plan, whose token usually dies between scheduled runs;
+ *   • a single order the panel already marked `token_dead`.
+ * A local monthly record is included too, for a plan this bot runs itself.
+ * Returns accountId -> { kind: "monthly" | "panel_single", acc? }.
+ */
+async function _refreshableAccounts(client, userId) {
+    const map = new Map();
+    if (PanelQuest.isEnabled()) {
+        const { single = [], monthly = [] } = await PanelQuest.listByRef(
+            userId,
+        ).catch(() => ({ single: [], monthly: [] }));
+        for (const a of single)
+            if (a.status === "token_dead")
+                map.set(String(a.accountId), { kind: "panel_single", acc: a });
+        for (const m of monthly)
+            if (m.active) map.set(String(m.accountId), { kind: "monthly" });
+    }
+    const local = await getUserMonthlyAccountIds(client, userId).catch(() => []);
+    for (const id of local)
+        if (!map.has(String(id))) map.set(String(id), { kind: "monthly" });
+    return map;
+}
 
 // Owner/dev users run Auto Quest for free — no payment step.
 function _isStaffFree(client, userId) {
@@ -127,35 +155,44 @@ async function _handleButton(client, interaction) {
         );
     }
 
-    // "Cập nhật token" button — for accounts whose token has died. Looks up the
-    // account waiting for a token re-entry and opens the re-entry modal (reusing the
-    // quest:refresh_modal flow that resolves the token and resumes the paid quests /
-    // monthly plan). If nothing is waiting, tell the user there's nothing to update.
+    // "Cập nhật token" button — for accounts whose token has died. Opens the token
+    // re-entry modal (the quest:refresh_modal flow resolves the token and resumes the
+    // paid quests / monthly plan) for the account that is waiting for one. A monthly
+    // plan runs on a schedule, so its token can die with nothing here flagging it —
+    // in that case the modal is opened without a fixed account and the account is
+    // taken from the token itself. Only a user with no quest at all is turned away.
     if (customId === "quest:update_token") {
         const refreshRecord = await getTokenRefreshRecord(
             client,
             interaction.user.id,
         );
-        if (!refreshRecord) {
-            return interaction.reply({
-                ephemeral: true,
-                embeds: [
-                    client.embed(
-                        "Bạn không có account nào đang chờ cập nhật token. Nút này chỉ dùng khi bot báo token của bạn bị lỗi.",
-                        {
-                            title: "🔑 Cập nhật token",
-                            color: 0xfee75c,
-                        },
-                    ),
-                ],
-            });
-        }
-        return interaction.showModal(
-            _buildTokenModal(
-                `quest:refresh_modal:${refreshRecord.accountId}`,
-                "Nhập lại token Discord",
-            ),
-        );
+        if (refreshRecord)
+            return interaction.showModal(
+                _buildTokenModal(
+                    `quest:refresh_modal:${refreshRecord.accountId}`,
+                    "Nhập lại token Discord",
+                ),
+            );
+        const refreshable = await _refreshableAccounts(client, interaction.user.id);
+        if (refreshable.size)
+            return interaction.showModal(
+                _buildTokenModal(
+                    "quest:refresh_modal:any",
+                    "Nhập lại token Discord",
+                ),
+            );
+        return interaction.reply({
+            ephemeral: true,
+            embeds: [
+                client.embed(
+                    "Bạn không có account nào đang chờ cập nhật token. Nút này chỉ dùng khi bot báo token của bạn bị lỗi, hoặc khi bạn đang có gói tháng.",
+                    {
+                        title: "🔑 Cập nhật token",
+                        color: 0xfee75c,
+                    },
+                ),
+            ],
+        });
     }
 
     if (customId === "quest:check_token") {
@@ -607,17 +644,26 @@ async function _handleModal(client, interaction) {
 
     // Refresh token submission
     if (interaction.customId.startsWith("quest:refresh_modal:")) {
-        const accountId = interaction.customId.split(":")[2];
+        const modalTarget = interaction.customId.split(":")[2];
+        // "any" = the panel button opened this with nothing flagged (a monthly
+        // token that died between scheduled runs). The account is then whatever the
+        // token resolves to, checked against this user's plans below.
+        const wildcard = modalTarget === "any";
         const token = client.funcs.normalizeDiscordTokenInput(
             interaction.fields.getTextInputValue("token"),
         );
         await interaction.deferReply({ ephemeral: true });
 
-        const refreshRecord = await getTokenRefreshRecord(
-            client,
-            interaction.user.id,
-        );
-        if (!refreshRecord || refreshRecord.accountId !== accountId) {
+        const userId = interaction.user.id;
+        const refreshRecord = await getTokenRefreshRecord(client, userId);
+        const preFlagged =
+            !wildcard && refreshRecord?.accountId === modalTarget;
+        // Panel-run accounts may be re-tokened even when nothing flagged them —
+        // and a flagged order can ALSO be one the panel runs (paid while the token
+        // was dead), which must resume there rather than in this bot, so ask either
+        // way.
+        const refreshable = await _refreshableAccounts(client, userId);
+        if (!wildcard && !preFlagged && !refreshable.has(modalTarget)) {
             return interaction.editReply({
                 embeds: [
                     client.embed(
@@ -638,12 +684,24 @@ async function _handleModal(client, interaction) {
                 ],
             });
         }
-        if (resolved.accountId !== accountId) {
+        if (!wildcard && resolved.accountId !== modalTarget) {
             return interaction.editReply({
                 embeds: [
                     client.embed(
-                        `Bạn chỉ được nhập lại token của account \`${accountId}\`.`,
+                        `Bạn chỉ được nhập lại token của account \`${modalTarget}\`.`,
                         { title: "Sai account" },
+                    ),
+                ],
+            });
+        }
+        const accountId = resolved.accountId;
+        const flagged = refreshRecord?.accountId === accountId;
+        if (!flagged && !refreshable.has(accountId)) {
+            return interaction.editReply({
+                embeds: [
+                    client.embed(
+                        `Account \`${accountId}\` không có đơn quest nào đang chờ token. Nếu chưa mua, bấm **Quest lẻ** hoặc **Quest tháng**.`,
+                        { title: "Không thể nhập lại token" },
                     ),
                 ],
             });
@@ -659,7 +717,6 @@ async function _handleModal(client, interaction) {
         // this branch, only the "Mua/nhập gói tháng" button actually re-installed
         // the token. Push the new token to wherever the monthly run reads it so a
         // single "Cập nhật token" press fixes monthly accounts too.
-        const userId = interaction.user.id;
         let panelMonthlyActive = false;
         if (PanelQuest.isEnabled()) {
             const { monthly = [] } = await PanelQuest.listByRef(userId).catch(
@@ -715,6 +772,65 @@ async function _handleModal(client, interaction) {
                 ],
             });
         }
+
+        // ── Panel-run single order ───────────────────────────────────────────
+        // The panel holds this account's token and its quest selection; the local
+        // startAccount() below would start a SECOND run here instead of reviving
+        // the paid one. Re-install the token on the panel and let it resume.
+        const panelEntry = refreshable.get(accountId);
+        if (PanelQuest.isEnabled() && panelEntry?.kind === "panel_single") {
+            const acc = panelEntry.acc ?? {};
+            try {
+                await PanelQuest.start({
+                    token,
+                    mode: acc.mode === "select" ? "select" : "all",
+                    selectedQuestIds: acc.selectedQuestIds ?? [],
+                    ref: userId,
+                });
+            } catch (e) {
+                return interaction.editReply({
+                    embeds: [
+                        client.embed(e.message, { title: "Kích hoạt thất bại" }),
+                    ],
+                });
+            }
+            return interaction.editReply({
+                embeds: [
+                    client.embed(
+                        "Bot đang chạy tiếp các quest đã mua của account này.",
+                        {
+                            title: "Token đã được cập nhật",
+                            color: 0x57f287,
+                            fields: [
+                                {
+                                    name: "Tài khoản",
+                                    value: resolved.username,
+                                    inline: true,
+                                },
+                                {
+                                    name: "ID",
+                                    value: `\`${accountId}\``,
+                                    inline: true,
+                                },
+                            ],
+                            timestamp: true,
+                        },
+                    ),
+                ],
+            });
+        }
+
+        // Past the branches above, only a flagged local order can be revived
+        // (a plan that expired between the two lookups above lands here).
+        if (!refreshRecord)
+            return interaction.editReply({
+                embeds: [
+                    client.embed(
+                        "Không tìm thấy đơn quest nào đang chờ token cho account này.",
+                        { title: "Không thể nhập lại token" },
+                    ),
+                ],
+            });
 
         const result = await startAccount(client, userId, token, {
             resolvedAccount: resolved,

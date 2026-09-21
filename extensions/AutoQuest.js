@@ -2269,6 +2269,23 @@ async function getMonthlySubscriptionRaw(client, userId, accountId) {
     return _isMonthlyActive(r) ? r.monthlyExpiresAt : null;
 }
 
+/** Account ids with an ACTIVE monthly sub for this user. Reads RAW so a dead-token
+ *  record still counts — that is exactly when a token re-entry is needed. */
+async function getUserMonthlyAccountIds(client, userId) {
+    const accounts = (await _readAccounts(client))[userId];
+    if (!accounts || typeof accounts !== "object" || Array.isArray(accounts))
+        return [];
+    return Object.entries(accounts)
+        .filter(
+            ([, r]) =>
+                r &&
+                typeof r === "object" &&
+                !Array.isArray(r) &&
+                _isMonthlyActive(r),
+        )
+        .map(([accountId]) => accountId);
+}
+
 async function cancelMonthlyPayment(client, paymentId) {
     const list = await _readMonthlyPending(client);
     const removed = list.find((i) => i.paymentId === paymentId) ?? null;
@@ -2708,6 +2725,7 @@ module.exports = {
     getMonthlyPaymentById,
     getOpenMonthlyPayment,
     getMonthlySubscriptionRaw,
+    getUserMonthlyAccountIds,
     cancelMonthlyPayment,
     expireStaleMonthlyPayments,
     activateMonthlySubscription,

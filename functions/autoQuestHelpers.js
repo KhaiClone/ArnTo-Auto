@@ -9,6 +9,7 @@ const {
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
+    MessageFlags,
 } = require("discord.js");
 
 // Shared builder for the quest panel components. Two rows of buttons:
@@ -59,6 +60,113 @@ const PanelQuest = require("../extensions/PanelQuest");
 
 // In-memory registry: `${userId}:${accountId}` → { messageId, footerText }
 const orderLogRegistry = new Map();
+
+// ── Quest completion notices ───────────────────────────────────────────────────
+// Completions used to go to the buyer's DMs. They now go to ONE channel
+// (settings.questNotifyChannelId) so every run is visible in one place; the buyer is
+// mentioned so each notice still says whose quest it is. Messages keep the silent
+// style (SuppressNotifications): the mention renders, no ping is pushed.
+// No channel configured → the notice is DMed, exactly like before.
+
+/** The configured notify channel, or null when unset/unreachable/not text-based. */
+async function _questNotifyChannel(client) {
+    const id = client.configs.settings.questNotifyChannelId;
+    if (!id) return null;
+    const channel = await client.channels.fetch(id).catch(() => null);
+    return channel?.isTextBased?.() ? channel : null;
+}
+
+/** Post the embed to the notify channel, or DM the buyer when there is none. */
+async function _deliverQuestNotice(client, userId, embed) {
+    try {
+        const channel = await _questNotifyChannel(client);
+        if (channel) {
+            await channel.send({
+                content: `<@${userId}>`,
+                embeds: [embed],
+                allowedMentions: { users: [userId] },
+                flags: MessageFlags.SuppressNotifications,
+            });
+            return true;
+        }
+        const user = await client.users.fetch(userId).catch(() => null);
+        if (!user) return false;
+        await user.send({
+            embeds: [embed],
+            flags: MessageFlags.SuppressNotifications,
+        });
+        return true;
+    } catch (e) {
+        console.warn(
+            `[autoQuestHelpers] quest notice for ${userId} failed: ${e.message}`,
+        );
+        return false;
+    }
+}
+
+const planLabel = (plan) => (plan === "monthly" ? "♾️ Quest tháng" : "⚡ Quest lẻ");
+const accountLine = (username, accountId) =>
+    username ? `**${username}**` : `\`${accountId ?? "?"}\``;
+
+/**
+ * Notice for ONE finished quest.
+ * @param {Object} info - { userId, accountId?, username?, questName, taskType?, plan? }
+ */
+async function sendQuestDoneNotice(
+    client,
+    { userId, accountId, username, questName, taskType, plan },
+) {
+    if (!userId || !questName) return false;
+    const embed = client.embed(
+        `> 🎯 **${questName}**${taskType ? ` · \`${taskType}\`` : ""}`,
+        {
+            title: "✅ Hoàn thành 1 quest",
+            color: 0x57f287,
+            fields: [
+                { name: "👤 Khách hàng", value: `<@${userId}>`, inline: true },
+                {
+                    name: "🎮 Account",
+                    value: accountLine(username, accountId),
+                    inline: true,
+                },
+                { name: "📦 Gói", value: planLabel(plan), inline: true },
+            ],
+            footer: { text: `QUEST • ${accountId ?? "—"}` },
+            timestamp: true,
+        },
+    );
+    return _deliverQuestNotice(client, userId, embed);
+}
+
+/**
+ * Notice for a finished ORDER (every selected quest is done).
+ * @param {Object} info - { userId, accountId?, username?, completed?, plan? }
+ */
+async function sendQuestOrderDoneNotice(
+    client,
+    { userId, accountId, username, completed, plan },
+) {
+    if (!userId) return false;
+    const countField = Number.isFinite(completed)
+        ? { name: "✅ Đã xong", value: `**${completed}** quest`, inline: true }
+        : { name: "📦 Gói", value: planLabel(plan), inline: true };
+    const embed = client.embed("> 🎉 Toàn bộ quest đã chọn đã chạy xong.", {
+        title: "🏁 Đã xong đơn quest",
+        color: 0x57f287,
+        fields: [
+            { name: "👤 Khách hàng", value: `<@${userId}>`, inline: true },
+            {
+                name: "🎮 Account",
+                value: accountLine(username, accountId),
+                inline: true,
+            },
+            countField,
+        ],
+        footer: { text: `QUEST • ${accountId ?? "—"}` },
+        timestamp: true,
+    });
+    return _deliverQuestNotice(client, userId, embed);
+}
 
 // ── Order log ──────────────────────────────────────────────────────────────────
 
@@ -474,6 +582,8 @@ function buildMonthlyCancelRow(paymentId) {
 }
 
 module.exports = {
+    sendQuestDoneNotice,
+    sendQuestOrderDoneNotice,
     sendOrderLog,
     editOrderLog,
     editOrderLogPaid,

@@ -40,6 +40,9 @@ module.exports = {
     vietqrChannelId: process.env.VIETQR_CHANNEL_ID || "",
     logWebhookUrl: process.env.LOG_WEBHOOK_URL || "",
     questOrderLogChannelId: process.env.QUEST_ORDER_LOG_CHANNEL_ID || "",
+    // Channel every finished-quest notice is posted to (the buyer is mentioned in
+    // it). Empty = fall back to DMing the buyer, the way it worked before.
+    questNotifyChannelId: process.env.QUEST_NOTIFY_CHANNEL_ID || "",
     robuxOrderLogChannelId: process.env.ROBUX_ORDER_LOG_CHANNEL_ID || "",
     robuxQueueChannelId: process.env.ROBUX_QUEUE_CHANNEL_ID || "",
     badgeOrderLogChannelId: process.env.BADGE_ORDER_LOG_CHANNEL_ID || "",

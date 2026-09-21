@@ -1,4 +1,3 @@
-const { MessageFlags } = require("discord.js");
 const AutoBank = require("../../../extensions/AutoBank");
 const {
     restoreAccounts,
@@ -19,6 +18,8 @@ const {
     editOrderLogPaid,
     cancelOrderLog,
     unlockPaymentIfPaid,
+    sendQuestDoneNotice,
+    sendQuestOrderDoneNotice,
 } = require("../../../functions/autoQuestHelpers");
 
 module.exports = {
@@ -78,47 +79,33 @@ module.exports = {
                     return res.status(401).json({ error: "unauthorized" });
                 res.json({ ok: true }); // ack immediately; handle async
                 try {
-                    const { type, accountId, ref, status, error, taskType } =
+                    const { type, accountId, ref, status, error, taskType, username, plan } =
                         req.body || {};
                     // Single-quest events (questEngine) send the quest name as `name`;
                     // the monthly runner sends it as `questName`. Accept either so the
-                    // completion DM fires for both flows.
+                    // completion notice fires for both flows.
                     const questName = req.body?.questName ?? req.body?.name;
                     const userId = ref;
                     if (!userId) return;
-                    const user = await client.users.fetch(userId).catch(() => null);
 
-                    if (type === "quest_done" && questName && user) {
-                        await user
-                            .send({
-                                embeds: [
-                                    client.embed(
-                                        `Đã hoàn thành quest: **${questName}**${taskType ? ` [${taskType}]` : ""}`,
-                                        {
-                                            title: "✅ Đã hoàn thành 1 quest",
-                                            color: 0x57f287,
-                                            timestamp: true,
-                                        },
-                                    ),
-                                ],
-                                flags: MessageFlags.SuppressNotifications,
-                            })
-                            .catch(() => null);
+                    if (type === "quest_done" && questName) {
+                        // Goes to the quest notify channel (settings.questNotifyChannelId),
+                        // mentioning the buyer — no longer a DM.
+                        await sendQuestDoneNotice(client, {
+                            userId,
+                            accountId,
+                            username,
+                            questName,
+                            taskType,
+                            plan,
+                        });
                     } else if (type === "status" && status === "done") {
-                        if (user)
-                            await user
-                                .send({
-                                    embeds: [
-                                        client.embed(
-                                            "Tất cả quest đã chọn đã hoàn thành.",
-                                            {
-                                                title: "Đã xong đơn quest",
-                                                color: 0x57f287,
-                                            },
-                                        ),
-                                    ],
-                                })
-                                .catch(() => null);
+                        await sendQuestOrderDoneNotice(client, {
+                            userId,
+                            accountId,
+                            username,
+                            plan,
+                        });
                     } else if (type === "status" && status === "token_dead") {
                         await cancelOrderLog(
                             client,
@@ -126,6 +113,8 @@ module.exports = {
                             accountId,
                             "⏸️ Token account bị dead. Nhập lại token để tiếp tục.",
                         ).catch(() => null);
+                        // Still a DM: this one asks the buyer to do something.
+                        const user = await client.users.fetch(userId).catch(() => null);
                         if (user)
                             await user
                                 .send({
@@ -353,29 +342,22 @@ module.exports = {
                         });
                     }
 
-                    // Per-quest completion DM (quest lẻ): fires as each quest finishes
-                    // so a restart mid-order never drops earlier quests from the DMs.
+                    // Per-quest completion notice (quest lẻ): fires as each quest
+                    // finishes so a restart mid-order never drops earlier quests.
+                    // Posted to the quest notify channel, not the buyer's DMs.
                     if (type === "quest_completed_one") {
-                        return user.send({
-                            embeds: [
-                                client.embed(
-                                    [
-                                        `Account: **${username}** (\`${accountId}\`)`,
-                                        `Đã hoàn thành quest: **${questName}**${taskType ? ` [${taskType}]` : ""}`,
-                                    ].join("\n"),
-                                    {
-                                        title: "✅ Đã hoàn thành 1 quest",
-                                        color: 0x57f287,
-                                        timestamp: true,
-                                    },
-                                ),
-                            ],
-                            flags: MessageFlags.SuppressNotifications,
+                        return sendQuestDoneNotice(client, {
+                            userId,
+                            accountId,
+                            username,
+                            questName,
+                            taskType,
+                            plan: "single",
                         });
                     }
 
                     // Batch completion now only updates the staff order log — the
-                    // per-quest DMs above replace the (previously batch) user DM.
+                    // per-quest notices above replace the (previously batch) user DM.
                     if (type === "quest_batch_completed") {
                         await editOrderLog(
                             client,
@@ -430,21 +412,13 @@ module.exports = {
                     }
 
                     if (type === "monthly_quest_done") {
-                        return user.send({
-                            embeds: [
-                                client.embed(
-                                    [
-                                        `Account: **${username}** (\`${accountId}\`)`,
-                                        `Đã hoàn thành quest: **${questName}**${taskType ? ` [${taskType}]` : ""}`,
-                                    ].join("\n"),
-                                    {
-                                        title: "Đã xong 1 quest (gói tháng)",
-                                        color: 0x57f287,
-                                        timestamp: true,
-                                    },
-                                ),
-                            ],
-                            flags: MessageFlags.SuppressNotifications,
+                        return sendQuestDoneNotice(client, {
+                            userId,
+                            accountId,
+                            username,
+                            questName,
+                            taskType,
+                            plan: "monthly",
                         });
                     }
 

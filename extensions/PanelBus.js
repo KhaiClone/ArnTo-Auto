@@ -98,11 +98,16 @@ class PanelBus {
     }
 
     isForMe(msg) {
+        const me = this.client.user?.id;
         return (
             !!this.channelId &&
+            !!me &&
             msg.channelId === this.channelId &&
             msg.author?.id === this.panelBotId &&
-            !!msg.mentions?.users?.has(this.client.user?.id)
+            // The text as well as the parsed mentions: a command posted before this
+            // bot joined the server is not recorded as a mention of it. Safe — only
+            // an envelope signed with THIS bot's key is ever run.
+            (!!msg.mentions?.users?.has(me) || String(msg.content || "").includes(`<@${me}>`))
         );
     }
 

@@ -6,8 +6,8 @@ const {
 
 /**
  * A quest event from the bot-panel (it runs the quests; payment stays here).
- * Reached two ways: the Discord bus ("quest.event", extensions/panelLink.js)
- * and the older POST /api/quest-event. ref = the buyer's Discord user id.
+ * Arrives over the Discord bus ("quest.event", extensions/panelLink.js).
+ * ref = the buyer's Discord user id.
  */
 module.exports = async function handleQuestEvent(client, body) {
     const { type, accountId, ref, status, error, taskType, username, plan } = body || {};

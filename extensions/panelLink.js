@@ -5,10 +5,10 @@ const PanelBus = require("./PanelBus");
 module.exports = (client) => {
     const bus = new PanelBus(client);
 
-    // Quest progress the panel runs for our buyers (same handler as POST /api/quest-event).
+    // Quest progress the panel runs for our buyers.
     bus.handle("quest.event", (body) => require("../functions/panelQuestEvent")(client, body));
 
-    // Auto Badge order progress (same handler as POST /api/badge-event).
+    // Auto Badge order progress.
     bus.handle("badge.event", async (body) => {
         await require("./AutoBadge").handlePanelEvent(client, body || {});
         return { handled: true };

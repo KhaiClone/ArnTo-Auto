@@ -10,7 +10,7 @@
  *      Khách không Nitro thì phải TỰ KHAI số hiện tại.
  *   3. Hiện QR (không có bước xác nhận riêng — theo quyết định thiết kế)
  *   4. Tiền về → PanelBadge.start() → panel đọc bằng reader, so mốc, gửi
- *   5. Panel webhook về /api/badge-event → DM khách
+ *   5. Panel báo qua Discord (badge.event, extensions/panelLink.js) → DM khách
  *
  * TẠI SAO KHÔNG ĐỌC BẰNG READER TRƯỚC KHI THU TIỀN: reader là acc Nitro cá nhân,
  * mỗi lượt đọc là một request phát ra từ nó. Nếu báo giá cũng dùng reader thì bất
@@ -318,7 +318,7 @@ function _dmFields(p) {
     return out;
 }
 
-/** Panel POST /api/badge-event → hàm này. Dịch sự kiện thành DM cho khách. */
+/** Sự kiện badge.event từ panel (kênh Discord) → hàm này. Dịch sự kiện thành DM cho khách. */
 async function handlePanelEvent(client, event) {
     const { orderId, ref, type } = event;
     const userId = ref;

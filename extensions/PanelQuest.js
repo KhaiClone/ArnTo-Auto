@@ -2,7 +2,7 @@
  * PanelQuest.js
  * Client for delegating quest EXECUTION to the bot-panel. Payment stays in
  * arnto-auto; when a run should start, we call the panel's external quest API and
- * the panel webhooks quest events back to /api/quest-event (see ready.js).
+ * the panel sends quest events back over Discord ("quest.event", extensions/panelLink.js).
  *
  * Enabled only when PANEL_QUEST=true and PANEL_API_URL/PANEL_API_KEY are set.
  */
@@ -11,7 +11,6 @@ const axios = require("axios");
 
 const BASE = () => process.env.PANEL_API_URL;
 const KEY = () => process.env.PANEL_API_KEY;
-const WEBHOOK = () => process.env.PANEL_QUEST_WEBHOOK_URL || null;
 
 function isEnabled() {
     return process.env.PANEL_QUEST === "true" && !!BASE() && !!KEY();
@@ -42,7 +41,7 @@ async function preview(token) {
 async function start({ token, mode = "select", selectedQuestIds = [], ref }) {
     const res = await axios.post(
         `${BASE()}/api/external/quests/start`,
-        { token, mode, selectedQuestIds, webhookUrl: WEBHOOK(), ref: ref ?? null },
+        { token, mode, selectedQuestIds, ref: ref ?? null },
         { headers: _headers(), timeout: 20000, validateStatus: () => true },
     );
     if (res.status >= 400) {
@@ -56,7 +55,7 @@ async function start({ token, mode = "select", selectedQuestIds = [], ref }) {
 async function activateMonthly({ token, months = 1, ref }) {
     const res = await axios.post(
         `${BASE()}/api/external/quests/monthly`,
-        { token, months, webhookUrl: WEBHOOK(), ref: ref ?? null },
+        { token, months, ref: ref ?? null },
         { headers: _headers(), timeout: 20000, validateStatus: () => true },
     );
     if (res.status >= 400) {

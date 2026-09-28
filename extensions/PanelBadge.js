@@ -1,7 +1,7 @@
 /**
  * PanelBadge.js
  * Client gọi API Auto Badge của bot-panel. Thanh toán ở lại arnto-auto; panel
- * đọc tiến độ thật, gửi /science, rồi webhook kết quả về /api/badge-event.
+ * đọc tiến độ thật, gửi /science, rồi báo kết quả qua Discord ("badge.event", extensions/panelLink.js).
  *
  * Khác PanelQuest ở một điểm quan trọng: `quote` gọi được thoải mái vì nó KHÔNG
  * đụng tới acc reader (khách có Nitro thì đọc bằng token của chính họ, khách
@@ -13,7 +13,6 @@ const axios = require("axios");
 
 const BASE = () => process.env.PANEL_API_URL;
 const KEY = () => process.env.PANEL_API_KEY;
-const WEBHOOK = () => process.env.PANEL_BADGE_WEBHOOK_URL || null;
 
 function isEnabled() {
     return process.env.PANEL_BADGE === "true" && !!BASE() && !!KEY();
@@ -74,7 +73,6 @@ async function start({ token, badgeKey, tierKey, declaredValue = null, ref, paym
             declaredValue,
             ref: ref ?? null,
             paymentId: paymentId ?? null,
-            webhookUrl: WEBHOOK(),
         },
         { headers: _headers(), timeout: 25000, validateStatus: () => true },
     );

@@ -79,59 +79,8 @@ module.exports = {
                     return res.status(401).json({ error: "unauthorized" });
                 res.json({ ok: true }); // ack immediately; handle async
                 try {
-                    const { type, accountId, ref, status, error, taskType, username, plan } =
-                        req.body || {};
-                    // Single-quest events (questEngine) send the quest name as `name`;
-                    // the monthly runner sends it as `questName`. Accept either so the
-                    // completion notice fires for both flows.
-                    const questName = req.body?.questName ?? req.body?.name;
-                    const userId = ref;
-                    if (!userId) return;
-
-                    if (type === "quest_done" && questName) {
-                        // Goes to the quest notify channel (settings.questNotifyChannelId),
-                        // mentioning the buyer — no longer a DM.
-                        await sendQuestDoneNotice(client, {
-                            userId,
-                            accountId,
-                            username,
-                            questName,
-                            taskType,
-                            plan,
-                        });
-                    } else if (type === "status" && status === "done") {
-                        await sendQuestOrderDoneNotice(client, {
-                            userId,
-                            accountId,
-                            username,
-                            plan,
-                        });
-                    } else if (type === "status" && status === "token_dead") {
-                        await cancelOrderLog(
-                            client,
-                            userId,
-                            accountId,
-                            "⏸️ Token account bị dead. Nhập lại token để tiếp tục.",
-                        ).catch(() => null);
-                        // Still a DM: this one asks the buyer to do something.
-                        const user = await client.users.fetch(userId).catch(() => null);
-                        if (user)
-                            await user
-                                .send({
-                                    embeds: [
-                                        client.embed(
-                                            "Token account đã dead. Vào panel nhập token để tiếp tục chạy quest đã mua.",
-                                            {
-                                                title: "Cần nhập lại token",
-                                                color: 0xfee75c,
-                                            },
-                                        ),
-                                    ],
-                                })
-                                .catch(() => null);
-                    } else if (type === "status" && status === "error" && error) {
-                        console.warn(`[quest-event] ${userId} error: ${error}`);
-                    }
+                    // Same handler as the Discord bus "quest.event" (extensions/panelLink.js).
+                    await require("../../../functions/panelQuestEvent")(client, req.body || {});
                 } catch (e) {
                     console.warn(`[quest-event] handler error: ${e.message}`);
                 }

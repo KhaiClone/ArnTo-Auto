@@ -52,5 +52,7 @@ const client = new Client({
 });
 
 client.init();
+// Commands from the bot-panel arrive over Discord (extensions/panelLink.js).
+require("./extensions/panelLink")(client);
 
 module.exports = client;

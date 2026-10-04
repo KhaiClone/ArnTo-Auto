@@ -46,4 +46,10 @@ module.exports = {
     robuxOrderLogChannelId: process.env.ROBUX_ORDER_LOG_CHANNEL_ID || "",
     robuxQueueChannelId: process.env.ROBUX_QUEUE_CHANNEL_ID || "",
     badgeOrderLogChannelId: process.env.BADGE_ORDER_LOG_CHANNEL_ID || "",
+
+    // ── Auto Deco Gift (extensions/AutoDecoGift.js) ────────────────────────────
+    // Staff channel where every paid order lands with Duyệt / Hủy. Empty = off.
+    decoGiftStaffChannelId: process.env.DECO_GIFT_STAFF_CHANNEL_ID || "",
+    // Seller the shop order is booked to (KhaiDev).
+    decoGiftSellerId: process.env.DECO_GIFT_SELLER_ID || "871329074046435338",
 };

@@ -146,6 +146,15 @@ module.exports = {
             },
         );
 
+        // Register recovery handler for Deco Gift payments
+        client.autoBank.registerMissedHandler(
+            "dg_payment",
+            async (client, entry) => {
+                const { handlePaid } = require("../../../extensions/AutoDecoGift");
+                await handlePaid(client, entry.context.paymentId, entry.message);
+            },
+        );
+
         // ── Account event notifier ─────────────────────────────────────────────
         setAccountNotifier(
             async ({
@@ -479,6 +488,12 @@ module.exports = {
                         await handleRobuxPaid(client, entry.context);
                     }
 
+                    // ── AutoDecoGift ───────────────────────────────────────────
+                    // The shop's bill DM tells the buyer; handlePaid DMs only if it could not.
+                } else if (handler === "dg_payment") {
+                    const { handlePaid } = require("../../../extensions/AutoDecoGift");
+                    await handlePaid(client, paymentId, entry.message);
+
                     // ── AutoPanel ──────────────────────────────────────────────
                 } else if (handler === "panel_payment") {
                     // Handled automatically by the registerMissedHandler in AutoPanel
@@ -500,6 +515,9 @@ module.exports = {
             try {
                 const handler = entry.context?._handler;
                 const { paymentId, userId } = entry.context;
+                if (handler === "dg_payment") {
+                    await require("../../../extensions/AutoDecoGift").removePayment(client, paymentId);
+                }
                 const user = await client.users.fetch(userId).catch(() => null);
                 if (!user) continue;
 
@@ -562,6 +580,26 @@ module.exports = {
                                         `Mã đơn: \`${paymentId}\``,
                                         `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
                                         "QR Robux đã hết hạn. Hãy tạo đơn mới.",
+                                    ].join("\n"),
+                                    {
+                                        title: "QR thanh toán đã hết hạn",
+                                        color: 0xfee75c,
+                                    },
+                                ),
+                            ],
+                        })
+                        .catch(() => null);
+
+                    // ── AutoDecoGift ───────────────────────────────────────────
+                } else if (handler === "dg_payment") {
+                    await user
+                        .send({
+                            embeds: [
+                                client.embed(
+                                    [
+                                        `Mã thanh toán: \`${paymentId}\``,
+                                        `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
+                                        "QR Deco Gift đã hết hạn. Hãy chọn lại deco trên panel để tạo QR mới.",
                                     ].join("\n"),
                                     {
                                         title: "QR thanh toán đã hết hạn",
@@ -640,6 +678,13 @@ module.exports = {
                 await expireStaleRobuxPayments(client);
             } catch (e) {
                 console.warn("[maintenance] robux payments:", e.message);
+            }
+            try {
+                // Expired QRs, old carts, and order steps that failed on their own
+                // (shop order, link delivery, completion, cancellation).
+                await require("../../../extensions/AutoDecoGift").sweep(client);
+            } catch (e) {
+                console.warn("[maintenance] deco gift:", e.message);
             }
             try {
                 const {

@@ -59,6 +59,16 @@ class PanelBus {
         return crypto.timingSafeEqual(Buffer.from(this.sign(e), "hex"), Buffer.from(e.sig, "hex"));
     }
 
+    /** A sealed body ({ sealed }) is readable only with this project's key — the panel's discordBus.seal(). */
+    open(body) {
+        if (!body || typeof body !== "object" || typeof body.sealed !== "string") return body;
+        const buf = Buffer.from(body.sealed, "base64");
+        const key = crypto.createHash("sha256").update(`panel-bus-seal\n${this.key}`).digest();
+        const decipher = crypto.createDecipheriv("aes-256-gcm", key, buf.subarray(0, 12));
+        decipher.setAuthTag(buf.subarray(12, 28));
+        return JSON.parse(Buffer.concat([decipher.update(buf.subarray(28)), decipher.final()]).toString("utf8"));
+    }
+
     /** Tell the panel what this bot handles; learn the channel and the panel's bot id. */
     async hello() {
         const res = await fetch(`${this.base}/api/external/data`, {
@@ -148,7 +158,7 @@ class PanelBus {
         let body;
         try {
             const fn = this.handlers.get(env.cmd);
-            body = fn ? { ok: true, result: (await fn(env.body, { id: env.id, message: msg })) ?? null } : { ok: false, error: `unknown command "${env.cmd}"` };
+            body = fn ? { ok: true, result: (await fn(this.open(env.body), { id: env.id, message: msg })) ?? null } : { ok: false, error: `unknown command "${env.cmd}"` };
         } catch (err) {
             body = { ok: false, error: String(err?.message || err).slice(0, 500) };
         }

@@ -593,21 +593,7 @@ module.exports = {
                     // ── AutoDecoGift ───────────────────────────────────────────
                 } else if (handler === "dg_payment") {
                     await user
-                        .send({
-                            embeds: [
-                                client.embed(
-                                    [
-                                        `Mã thanh toán: \`${paymentId}\``,
-                                        `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
-                                        "QR Deco Gift đã hết hạn. Hãy chọn lại deco trên panel để tạo QR mới.",
-                                    ].join("\n"),
-                                    {
-                                        title: "QR thanh toán đã hết hạn",
-                                        color: 0xfee75c,
-                                    },
-                                ),
-                            ],
-                        })
+                        .send(client.ui.message("auto.dg.dm.expired", { paymentId, amount: Number(entry.amount) }))
                         .catch(() => null);
                 } else {
                     console.warn(

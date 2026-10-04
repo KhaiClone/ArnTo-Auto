@@ -10,6 +10,10 @@
  * The other half is the bot-panel (server/services/decorGiftService.js): it reads
  * the decor data, asks ArnTo-Shop to open / complete / cancel the order and
  * ArnTo-assistant to DM the links, all over its Discord bus.
+ *
+ * Every word on screen is a template (templates/decoGift.js) the panel's Embeds
+ * page can edit: the views are "cards" (client.ui.card) — the code keeps the
+ * layout, the template the words, colours and button labels.
  */
 
 const { nanoid } = require("nanoid");
@@ -31,6 +35,7 @@ const {
     ThumbnailBuilder,
 } = require("discord.js");
 const panel = require("./PanelDecoGift");
+const { parseColor } = require("./uiTemplate");
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -63,19 +68,20 @@ const _serial = (fn) => {
 
 // ── Small helpers ──────────────────────────────────────────────────────────────
 
-const money = (n) => `${Number(n || 0).toLocaleString("vi-VN")}đ`;
 const trunc = (s, n) => {
     s = String(s ?? "");
     return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 };
-const ts = (ms) => `<t:${Math.floor(ms / 1000)}:f>`;
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, Number.isFinite(n) ? n : 0));
 const text = (s) => new TextDisplayBuilder().setContent(s);
 const sep = () => new SeparatorBuilder();
 const settings = (client) => client.configs.settings;
-const accent = (client) => client.funcs.hexToInt(client.configs.embed.color);
 const shopUrl = (sku) => `https://discord.com/shop#itemSkuId=${sku}`;
 const v2 = (container) => ({ components: [container], flags: MessageFlags.IsComponentsV2 });
+
+/** The shared words + colour of the buyer's views (template auto.dg.view). */
+const viewCard = (client, vars = {}) => client.ui.card("auto.dg.view", vars);
+const accentOf = (client, vars) => viewCard(client, vars).color ?? client.funcs.hexToInt(client.configs.embed.color);
 
 function isEnabled(client) {
     const s = settings(client);
@@ -115,18 +121,82 @@ function addDecor(container, d, line) {
     );
 }
 
-function decorLine(d, { inCart = false, index = null } = {}) {
-    const head = `**${index != null ? `${index}. ` : ""}${d.name}**${inCart ? " ✓" : ""}`;
-    const members = d.members?.length ? `\n-# Gồm: ${trunc(d.members.join(", "), 160)}` : "";
-    return `${head}\n${d.typeLabel} · **${money(d.price)}**${members}`;
-}
+// ── Template variables ─────────────────────────────────────────────────────────
 
-const cartButton = (cart) =>
-    new ButtonBuilder()
-        .setCustomId("dg:cart")
-        .setLabel(`Giỏ hàng (${cart.skus.length}/${MAX_ITEMS})`)
-        .setEmoji("🛒")
-        .setStyle(ButtonStyle.Success);
+/** A decor as templates see it (type decoItem). */
+const itemVars = (d, extra = {}) => ({
+    sku_id: d.sku_id,
+    name: d.name,
+    type: d.type,
+    typeLabel: d.typeLabel,
+    price: d.price,
+    thumb: d.thumb || null,
+    image: d.image || null,
+    members: Array.isArray(d.members) ? d.members.join(", ") : d.members || "",
+    shopUrl: shopUrl(d.sku_id),
+    inCart: false,
+    __text: d.name,
+    ...extra,
+});
+
+/** The cart as templates see it (type cart). */
+const cartVars = (cart, catalog) => {
+    const items = cart.skus.map((s) => catalog?.index.get(s)).filter(Boolean);
+    return {
+        count: cart.skus.length,
+        max: MAX_ITEMS,
+        room: Math.max(0, MAX_ITEMS - cart.skus.length),
+        total: items.reduce((sum, d) => sum + d.price, 0),
+        full: cart.skus.length >= MAX_ITEMS,
+        items: items.map((d, i) => itemVars(d, { index: i + 1 })),
+    };
+};
+
+const bankVars = (client) => {
+    const s = settings(client);
+    return { holder: s.bankHolder, code: s.bankCode, account: s.bankAccount };
+};
+
+/** A payment as templates see it (type payment). */
+const paymentVars = (payment) => ({
+    id: payment.id,
+    total: payment.total,
+    transferCode: payment.transferCode,
+    qrUrl: payment.qrUrl || null,
+    status: payment.status,
+    open: payment.status === "pending",
+    expiresAt: payment.expiresAt,
+    count: payment.items.length,
+    items: payment.items.map((d, i) => itemVars(d, { index: i + 1 })),
+    __text: payment.id,
+});
+
+/** An order as templates see it (type decoOrder). */
+const orderVars = (o) => ({
+    id: o.id,
+    shopOrderId: o.shopOrderId || null,
+    waitingUrl: o.waitingUrl || null,
+    total: o.total,
+    paidAt: o.paidAt,
+    status: o.status,
+    bankMessage: o.bankMessage || "",
+    shopError: o.shopError || "",
+    lastError: o.lastError || "",
+    stuck: (o.tries || 0) >= MAX_TRIES,
+    deliveredBy: o.deliveredBy || null,
+    deliveredAt: o.deliveredAt || o.completedAt || null,
+    cancelledBy: o.cancelledBy || null,
+    cancelledAt: o.cancelledAt || null,
+    cancelReason: o.cancelReason || "",
+    shopCancelPending: !!o.shopCancelPending,
+    linksMasked: (o.linksMasked || []).join(" · "),
+    count: o.items.length,
+    items: o.items.map((d, i) => itemVars(d, { index: i + 1 })),
+    __text: o.shopOrderId || o.id,
+});
+
+const cartButton = (client, vars) =>
+    viewCard(client, vars).applyButton(new ButtonBuilder().setCustomId("dg:cart").setStyle(ButtonStyle.Success), "cart");
 
 // ── Cart ───────────────────────────────────────────────────────────────────────
 
@@ -171,88 +241,64 @@ function clearCart(userId) {
     cartOf(userId).skus = [];
 }
 
-/** From an add menu → the note to show above the list. */
-async function addSkus(userId, skus) {
-    const catalog = await panel.getCatalog();
-    return addedNote(addToCart(userId, skus, catalog)) || "Các deco này đã có trong giỏ.";
-}
-
-const addedNote = ({ added, full }) =>
-    [
-        added.length ? `✅ Đã thêm vào giỏ: ${trunc(added.join(", "), 300)}` : null,
-        full.length ? `⚠️ Giỏ đã đủ ${MAX_ITEMS} deco, chưa thêm: ${trunc(full.join(", "), 200)}` : null,
-    ]
+/** The note above a list after adding: what went in, what did not fit. */
+const addedNote = (client, userId, { added, full }) => {
+    const v = viewCard(client, { cart: { max: MAX_ITEMS, count: cartOf(userId).skus.length } });
+    return [added.length ? v.text("added", { names: added.join(", ") }) : null, full.length ? v.text("full", { names: full.join(", ") }) : null]
         .filter(Boolean)
         .join("\n");
+};
+
+/** From an add menu → the note to show above the list. */
+async function addSkus(client, userId, skus) {
+    const catalog = await panel.getCatalog();
+    return addedNote(client, userId, addToCart(userId, skus, catalog)) || viewCard(client).text("alreadyIn");
+}
+
+/** One line of the buyer's notes (template auto.dg.view). */
+const note = (client, slot, vars = {}) => viewCard(client, vars).text(slot);
 
 // ── Views ──────────────────────────────────────────────────────────────────────
 
-function loadingView() {
-    return v2(new ContainerBuilder().addTextDisplayComponents(text("⏳ Đang tải…")));
+function loadingView(client) {
+    return v2(new ContainerBuilder().addTextDisplayComponents(text(note(client, "loading"))));
 }
 
 function messageView(client, content) {
-    return v2(new ContainerBuilder().setAccentColor(accent(client)).addTextDisplayComponents(text(content)));
+    return v2(new ContainerBuilder().setAccentColor(accentOf(client)).addTextDisplayComponents(text(content)));
 }
 
-/** The public panel /dg-setup posts (embed + three buttons). */
+/** The public panel /dg-setup posts (template auto.dg.panel). */
 function panelMessage(client) {
-    return {
-        embeds: [
-            client.embed(
-                [
-                    "Mua **Deco Discord dạng quà tặng (Gift)** — avatar, hiệu ứng hồ sơ, nameplate, khung, bundle. Chọn deco, quét QR là xong, không cần gõ lệnh.",
-                    "",
-                    "**Cách mua**",
-                    "1. Bấm **Bộ sưu tập** để xem theo bộ, hoặc **Tìm / dán link** để gõ tên deco hay dán link shop Discord.",
-                    `2. Chọn tối đa **${MAX_ITEMS} deco** mỗi đơn, xem lại ảnh trong **Giỏ hàng**.`,
-                    "3. Bấm **Thanh toán** và quét QR (hết hạn sau 10 phút).",
-                    "4. Admin duyệt đơn, link quà được gửi qua **tin nhắn riêng** — nhớ mở DM.",
-                ].join("\n"),
-                { title: "🎁 Deco Gift — Mua tự động" },
-            ),
-        ],
-        components: [
-            new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId("dg:browse").setLabel("Bộ sưu tập").setEmoji("🛍️").setStyle(ButtonStyle.Primary),
-                new ButtonBuilder().setCustomId("dg:search").setLabel("Tìm / dán link").setEmoji("🔎").setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder().setCustomId("dg:cart").setLabel("Giỏ hàng").setEmoji("🛒").setStyle(ButtonStyle.Success),
-            ),
-        ],
-    };
+    return client.ui.message("auto.dg.panel", { max: MAX_ITEMS }, {
+        buttons: { browse: { customId: "dg:browse" }, search: { customId: "dg:search" }, cart: { customId: "dg:cart" } },
+    });
 }
 
-async function categoriesView(client, userId, page = 0, note = "") {
+async function categoriesView(client, userId, page = 0, noteText = "") {
     const catalog = await panel.getCatalog();
     const cart = cartOf(userId);
     const cats = catalog.categories;
     const pages = Math.max(1, Math.ceil(cats.length / CATS_PER_PAGE));
     page = clamp(page, 0, pages - 1);
     const slice = cats.slice(page * CATS_PER_PAGE, (page + 1) * CATS_PER_PAGE);
+    const vars = { cart: cartVars(cart, catalog), page: page + 1, pages, note: noteText };
+    const card = client.ui.card("auto.dg.categories", vars);
 
-    const c = new ContainerBuilder()
-        .setAccentColor(accent(client))
-        .addTextDisplayComponents(
-            text(
-                `## 🛍️ Bộ sưu tập\nChọn một bộ để xem deco và giá Gift — bộ mới nhất ở trên.${note ? `\n${note}` : ""}`,
-            ),
-        );
+    const c = new ContainerBuilder().setAccentColor(accentOf(client, vars)).addTextDisplayComponents(text(card.text("header")));
     if (!slice.length) {
-        c.addTextDisplayComponents(text("*Hiện chưa có deco nào bán dạng Gift.*"));
+        c.addTextDisplayComponents(text(card.text("empty")));
     } else {
         c.addActionRowComponents(
             new ActionRowBuilder().addComponents(
                 new StringSelectMenuBuilder()
                     .setCustomId("dg:cat")
-                    .setPlaceholder(`Chọn bộ sưu tập (trang ${page + 1}/${pages})`)
+                    .setPlaceholder(card.placeholder("category"))
                     .addOptions(
                         slice.map((k) => {
                             const prices = (catalog.byCategory.get(k.sku_id) || []).map((d) => d.price);
-                            return {
-                                label: trunc(k.name, 100),
-                                value: k.sku_id,
-                                description: trunc(`${k.count} deco · từ ${money(Math.min(...prices))}`, 100),
-                            };
+                            const category = { sku_id: k.sku_id, name: k.name, count: k.count, minPrice: Math.min(...prices), __text: k.name };
+                            return { ...card.option("category", { category }), value: k.sku_id };
                         }),
                     ),
             ),
@@ -260,66 +306,59 @@ async function categoriesView(client, userId, page = 0, note = "") {
     }
     c.addActionRowComponents(
         new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`dg:cats:${page - 1}`).setEmoji("◀️").setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
-            new ButtonBuilder().setCustomId(`dg:cats:${page + 1}`).setEmoji("▶️").setStyle(ButtonStyle.Secondary).setDisabled(page >= pages - 1),
-            new ButtonBuilder().setCustomId("dg:search").setLabel("Tìm / dán link").setEmoji("🔎").setStyle(ButtonStyle.Secondary),
-            cartButton(cart),
+            card.applyButton(new ButtonBuilder().setCustomId(`dg:cats:${page - 1}`).setStyle(ButtonStyle.Secondary).setDisabled(page === 0), "prev"),
+            card.applyButton(new ButtonBuilder().setCustomId(`dg:cats:${page + 1}`).setStyle(ButtonStyle.Secondary).setDisabled(page >= pages - 1), "next"),
+            card.applyButton(new ButtonBuilder().setCustomId("dg:search").setStyle(ButtonStyle.Secondary), "search"),
+            cartButton(client, vars),
         ),
     );
     return v2(c);
 }
 
-/** One add-to-cart menu for a list of decors on screen. */
-function addMenu(customId, decors, cart) {
+/** One add-to-cart menu for the decors on screen (select "add" of `card`). */
+function addMenu(card, customId, decors, cart) {
     const room = MAX_ITEMS - cart.skus.length;
     const menu = new StringSelectMenuBuilder()
         .setCustomId(customId)
-        .setPlaceholder(room > 0 ? `Chọn deco để thêm vào giỏ (còn ${room} chỗ)` : `Giỏ đã đủ ${MAX_ITEMS} deco`)
+        .setPlaceholder(card.placeholder("add"))
         .setMinValues(1)
         .setMaxValues(Math.max(1, Math.min(decors.length, room)))
         .setDisabled(room <= 0)
-        .addOptions(
-            decors.map((d) => ({
-                label: trunc(d.name, 100),
-                value: d.sku_id,
-                description: trunc(`${cart.skus.includes(d.sku_id) ? "✓ Đã trong giỏ · " : ""}${d.typeLabel} · ${money(d.price)}`, 100),
-            })),
-        );
+        .addOptions(decors.map((d) => ({ ...card.option("add", itemVars(d, { inCart: cart.skus.includes(d.sku_id) })), value: d.sku_id })));
     return new ActionRowBuilder().addComponents(menu);
 }
 
-async function categoryView(client, userId, catSku, page = 0, note = "") {
+async function categoryView(client, userId, catSku, page = 0, noteText = "") {
     const catalog = await panel.getCatalog();
     const cart = cartOf(userId);
     const list = catalog.byCategory.get(catSku) || [];
     const catIndex = catalog.categories.findIndex((k) => k.sku_id === catSku);
     if (!list.length || catIndex < 0) {
-        return categoriesView(client, userId, 0, "⚠️ Bộ này không còn deco bán dạng Gift.");
+        return categoriesView(client, userId, 0, note(client, "categoryGone"));
     }
     const pages = Math.ceil(list.length / DECOS_PER_PAGE);
     page = clamp(page, 0, pages - 1);
     const slice = list.slice(page * DECOS_PER_PAGE, (page + 1) * DECOS_PER_PAGE);
+    const k = catalog.categories[catIndex];
+    const vars = {
+        category: { sku_id: k.sku_id, name: k.name, count: list.length, minPrice: Math.min(...list.map((d) => d.price)), __text: k.name },
+        cart: cartVars(cart, catalog),
+        page: page + 1,
+        pages,
+        note: noteText,
+    };
+    const card = client.ui.card("auto.dg.category", vars);
 
-    const c = new ContainerBuilder()
-        .setAccentColor(accent(client))
-        .addTextDisplayComponents(
-            text(
-                `## ${catalog.categories[catIndex].name}\n${list.length} deco · trang ${page + 1}/${pages} · giỏ ${cart.skus.length}/${MAX_ITEMS}${note ? `\n${note}` : ""}`,
-            ),
-        );
-    for (const d of slice) addDecor(c, d, decorLine(d, { inCart: cart.skus.includes(d.sku_id) }));
+    const c = new ContainerBuilder().setAccentColor(accentOf(client, vars)).addTextDisplayComponents(text(card.text("header")));
+    for (const d of slice) addDecor(c, d, card.text("item", itemVars(d, { inCart: cart.skus.includes(d.sku_id) })));
     c.addSeparatorComponents(sep());
-    c.addActionRowComponents(addMenu(`dg:add:c:${catSku}:${page}`, slice, cart));
+    c.addActionRowComponents(addMenu(card, `dg:add:c:${catSku}:${page}`, slice, cart));
     c.addActionRowComponents(
         new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`dg:catv:${catSku}:${page - 1}`).setEmoji("◀️").setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
-            new ButtonBuilder().setCustomId(`dg:catv:${catSku}:${page + 1}`).setEmoji("▶️").setStyle(ButtonStyle.Secondary).setDisabled(page >= pages - 1),
-            new ButtonBuilder()
-                .setCustomId(`dg:cats:${Math.floor(catIndex / CATS_PER_PAGE)}`)
-                .setLabel("Bộ khác")
-                .setEmoji("↩️")
-                .setStyle(ButtonStyle.Secondary),
-            cartButton(cart),
+            card.applyButton(new ButtonBuilder().setCustomId(`dg:catv:${catSku}:${page - 1}`).setStyle(ButtonStyle.Secondary).setDisabled(page === 0), "prev"),
+            card.applyButton(new ButtonBuilder().setCustomId(`dg:catv:${catSku}:${page + 1}`).setStyle(ButtonStyle.Secondary).setDisabled(page >= pages - 1), "next"),
+            card.applyButton(new ButtonBuilder().setCustomId(`dg:cats:${Math.floor(catIndex / CATS_PER_PAGE)}`).setStyle(ButtonStyle.Secondary), "back"),
+            cartButton(client, vars),
         ),
     );
     return v2(c);
@@ -373,13 +412,13 @@ async function runSearch(client, userId, input) {
             continue;
         }
         if (catalog.index.has(sku)) linked.push(sku);
-        else notes.push(`⚠️ \`${trunc(line, 60)}\`: deco này không bán dạng Gift.`);
+        else notes.push(note(client, "notGift", { line }));
     }
     const added = addToCart(userId, linked, catalog);
 
     const perLine = names.map((q) => {
         const hits = rank(q, catalog);
-        if (!hits.length) notes.push(`⚠️ Không tìm thấy “${trunc(q, 60)}”.`);
+        if (!hits.length) notes.push(note(client, "notFound", { query: q }));
         return hits;
     });
     // Round robin, so every line gets its best matches on screen.
@@ -389,70 +428,63 @@ async function runSearch(client, userId, input) {
             if (hits[i] && !merged.includes(hits[i]) && merged.length < SEARCH_MAX) merged.push(hits[i]);
         }
     }
-    const note = [addedNote(added), ...notes].filter(Boolean).join("\n");
-    if (!names.length) return { view: "cart", note };
+    const noteText = [addedNote(client, userId, added), ...notes].filter(Boolean).join("\n");
+    if (!names.length) return { view: "cart", note: noteText };
     cart.search = { skus: merged, query: names.join(", ") };
-    return { view: "search", note };
+    return { view: "search", note: noteText };
 }
 
-async function searchView(client, userId, note = "") {
+async function searchView(client, userId, noteText = "") {
     const catalog = await panel.getCatalog();
     const cart = cartOf(userId);
     const skus = (cart.search?.skus || []).filter((s) => catalog.index.has(s));
     const decors = skus.map((s) => catalog.index.get(s));
+    const vars = { cart: cartVars(cart, catalog), query: cart.search?.query || "", note: noteText };
+    const card = client.ui.card("auto.dg.search", vars);
 
-    const c = new ContainerBuilder()
-        .setAccentColor(accent(client))
-        .addTextDisplayComponents(
-            text(
-                `## 🔎 Kết quả tìm${cart.search?.query ? `: ${trunc(cart.search.query, 80)}` : ""}\ngiỏ ${cart.skus.length}/${MAX_ITEMS}${note ? `\n${note}` : ""}`,
-            ),
-        );
+    const c = new ContainerBuilder().setAccentColor(accentOf(client, vars)).addTextDisplayComponents(text(card.text("header")));
     if (!decors.length) {
-        c.addTextDisplayComponents(
-            text("Không có kết quả — thử gõ ngắn hơn (không cần dấu), tên bộ sưu tập, hoặc dán link shop Discord của deco."),
-        );
+        c.addTextDisplayComponents(text(card.text("empty")));
     } else {
-        for (const d of decors) addDecor(c, d, decorLine(d, { inCart: cart.skus.includes(d.sku_id) }));
+        for (const d of decors) addDecor(c, d, card.text("item", itemVars(d, { inCart: cart.skus.includes(d.sku_id) })));
         c.addSeparatorComponents(sep());
-        c.addActionRowComponents(addMenu("dg:add:s", decors, cart));
+        c.addActionRowComponents(addMenu(card, "dg:add:s", decors, cart));
     }
     c.addActionRowComponents(
         new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId("dg:search").setLabel("Tìm tiếp").setEmoji("🔎").setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId("dg:browse").setLabel("Bộ sưu tập").setEmoji("🛍️").setStyle(ButtonStyle.Secondary),
-            cartButton(cart),
+            card.applyButton(new ButtonBuilder().setCustomId("dg:search").setStyle(ButtonStyle.Secondary), "again"),
+            card.applyButton(new ButtonBuilder().setCustomId("dg:browse").setStyle(ButtonStyle.Secondary), "browse"),
+            cartButton(client, vars),
         ),
     );
     return v2(c);
 }
 
-async function cartView(client, userId, note = "") {
+async function cartView(client, userId, noteText = "") {
     const catalog = await panel.getCatalog();
     const cart = cartOf(userId);
     const gone = cart.skus.filter((s) => !catalog.index.has(s)).length;
     if (gone) {
         cart.skus = cart.skus.filter((s) => catalog.index.has(s));
-        note = [note, `⚠️ ${gone} deco vừa ngừng bán dạng Gift nên đã được bỏ khỏi giỏ.`].filter(Boolean).join("\n");
+        noteText = [noteText, note(client, "stoppedSelling", { count: gone })].filter(Boolean).join("\n");
     }
     const items = cart.skus.map((s) => catalog.index.get(s));
-    const total = items.reduce((sum, d) => sum + d.price, 0);
+    const vars = { cart: cartVars(cart, catalog), note: noteText };
+    const card = client.ui.card("auto.dg.cart", vars);
     const full = items.length >= MAX_ITEMS;
 
-    const c = new ContainerBuilder()
-        .setAccentColor(accent(client))
-        .addTextDisplayComponents(text(`## 🛒 Giỏ Deco Gift\n${items.length}/${MAX_ITEMS} deco${note ? `\n${note}` : ""}`));
+    const c = new ContainerBuilder().setAccentColor(accentOf(client, vars)).addTextDisplayComponents(text(card.text("header")));
     if (!items.length) {
-        c.addTextDisplayComponents(text("Giỏ đang trống — chọn deco từ **Bộ sưu tập** hoặc **Tìm / dán link**."));
+        c.addTextDisplayComponents(text(card.text("empty")));
         c.addActionRowComponents(
             new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId("dg:browse").setLabel("Bộ sưu tập").setEmoji("🛍️").setStyle(ButtonStyle.Primary),
-                new ButtonBuilder().setCustomId("dg:search").setLabel("Tìm / dán link").setEmoji("🔎").setStyle(ButtonStyle.Secondary),
+                card.applyButton(new ButtonBuilder().setCustomId("dg:browse").setStyle(ButtonStyle.Primary), "browseEmpty"),
+                card.applyButton(new ButtonBuilder().setCustomId("dg:search").setStyle(ButtonStyle.Secondary), "search"),
             ),
         );
         return v2(c);
     }
-    items.forEach((d, i) => addDecor(c, d, decorLine(d, { index: i + 1 })));
+    items.forEach((d, i) => addDecor(c, d, card.text("item", itemVars(d, { index: i + 1 }))));
     const pictures = items.filter((d) => usableUrl(d.image));
     if (pictures.length) {
         c.addMediaGalleryComponents(
@@ -462,42 +494,39 @@ async function cartView(client, userId, note = "") {
         );
     }
     c.addSeparatorComponents(sep());
-    c.addTextDisplayComponents(
-        text(
-            `### Tổng: ${money(total)}\n-# Sau khi thanh toán, admin duyệt đơn và link quà được gửi qua tin nhắn riêng — nhớ mở DM.`,
-        ),
-    );
+    c.addTextDisplayComponents(text(card.text("total")));
     c.addActionRowComponents(
         new ActionRowBuilder().addComponents(
             new StringSelectMenuBuilder()
                 .setCustomId("dg:rm")
-                .setPlaceholder("Bỏ bớt deco…")
+                .setPlaceholder(card.placeholder("remove"))
                 .setMinValues(1)
                 .setMaxValues(items.length)
-                .addOptions(items.map((d, i) => ({ label: trunc(`${i + 1}. ${d.name}`, 100), value: d.sku_id }))),
+                .addOptions(items.map((d, i) => ({ ...card.option("remove", itemVars(d, { index: i + 1 })), value: d.sku_id }))),
         ),
     );
     c.addActionRowComponents(
         new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId("dg:pay").setLabel(`Thanh toán ${money(total)}`).setEmoji("💳").setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId("dg:browse").setLabel("Chọn thêm").setEmoji("🛍️").setStyle(ButtonStyle.Secondary).setDisabled(full),
-            new ButtonBuilder().setCustomId("dg:search").setLabel("Tìm / dán link").setEmoji("🔎").setStyle(ButtonStyle.Secondary).setDisabled(full),
-            new ButtonBuilder().setCustomId("dg:clear").setLabel("Xóa giỏ").setEmoji("🗑️").setStyle(ButtonStyle.Danger),
+            card.applyButton(new ButtonBuilder().setCustomId("dg:pay").setStyle(ButtonStyle.Success), "pay"),
+            card.applyButton(new ButtonBuilder().setCustomId("dg:browse").setStyle(ButtonStyle.Secondary).setDisabled(full), "browse"),
+            card.applyButton(new ButtonBuilder().setCustomId("dg:search").setStyle(ButtonStyle.Secondary).setDisabled(full), "search"),
+            card.applyButton(new ButtonBuilder().setCustomId("dg:clear").setStyle(ButtonStyle.Danger), "clear"),
         ),
     );
     return v2(c);
 }
 
-function searchModal() {
+function searchModal(client) {
+    const card = client.ui.card("auto.dg.search", { cart: { max: MAX_ITEMS } });
     return new ModalBuilder()
         .setCustomId("dg:searchm")
-        .setTitle("Tìm deco")
+        .setTitle(trunc(card.text("modalTitle") || "Tìm deco", 45))
         .addComponents(
             new ActionRowBuilder().addComponents(
                 new TextInputBuilder()
                     .setCustomId("q")
-                    .setLabel("Tên deco hoặc link shop (mỗi dòng 1 cái)")
-                    .setPlaceholder("VD: Mèo Galaxy\nhttps://discord.com/shop#itemSkuId=...")
+                    .setLabel(trunc(card.text("modalLabel") || "Tên deco hoặc link shop", 45))
+                    .setPlaceholder(trunc(card.text("modalPlaceholder"), 100) || "...")
                     .setStyle(TextInputStyle.Paragraph)
                     .setMaxLength(1000)
                     .setRequired(true),
@@ -537,7 +566,7 @@ async function getOpenPayment(client, userId) {
 /**
  * The cart becomes a QR, at today's prices. A decor that stopped selling is
  * dropped from the cart and nothing is created — the buyer looks again.
- * → { payment } | { existed } | { removed: names } | { empty: true }
+ * → { payment } | { existed } | { removed: count } | { empty: true }
  */
 async function startPayment(client, userId) {
     const existed = await getOpenPayment(client, userId);
@@ -554,7 +583,16 @@ async function startPayment(client, userId) {
 
     const items = cart.skus.map((s) => {
         const d = catalog.index.get(s);
-        return { sku_id: d.sku_id, name: d.name, type: d.type, typeLabel: d.typeLabel, price: d.price, thumb: d.thumb || null, image: d.image || null };
+        return {
+            sku_id: d.sku_id,
+            name: d.name,
+            type: d.type,
+            typeLabel: d.typeLabel,
+            price: d.price,
+            thumb: d.thumb || null,
+            image: d.image || null,
+            members: d.members || null,
+        };
     });
     const total = items.reduce((sum, i) => sum + i.price, 0);
     const payment = await _serial(async () => {
@@ -633,44 +671,24 @@ function expireStale(client) {
     });
 }
 
-function paymentEmbed(client, payment, note) {
-    const s = settings(client);
+/**
+ * The QR message (template auto.dg.payment). `noteSlot` names a line of
+ * auto.dg.payment.notes (created / pending / cancelled). A cancelled payment has
+ * no QR and no button.
+ */
+function paymentMessage(client, payment, noteSlot, { edit = false, ephemeral = false } = {}) {
+    const vars = { payment: paymentVars(payment), bank: bankVars(client) };
+    vars.note = client.ui.card("auto.dg.payment.notes", vars).text(noteSlot);
     const open = payment.status === "pending";
-    return {
-        title: "Thanh toán Deco Gift",
-        color: open ? accent(client) : 0x95a5a6,
-        description: note || null,
-        fields: [
-            { name: "Mã thanh toán", value: `\`${payment.id}\``, inline: false },
-            {
-                name: `Deco (${payment.items.length})`,
-                value: trunc(
-                    payment.items.map((i, n) => `${n + 1}. **${i.name}** · ${i.typeLabel} — ${money(i.price)}`).join("\n"),
-                    1024,
-                ),
-                inline: false,
-            },
-            { name: "Tổng tiền", value: `\`${money(payment.total)}\``, inline: true },
-            ...(open
-                ? [
-                      { name: "Chủ tài khoản", value: `\`${s.bankHolder}\``, inline: true },
-                      { name: "Ngân hàng", value: `\`${s.bankCode}\``, inline: true },
-                      { name: "Số tài khoản", value: `\`\`\`\n${s.bankAccount}\n\`\`\``, inline: false },
-                      { name: "Nội dung chuyển khoản", value: `\`\`\`\n${payment.transferCode}\n\`\`\``, inline: false },
-                  ]
-                : []),
-        ],
-        image: open && payment.qrUrl ? { url: payment.qrUrl } : null,
-        footer: { text: open ? "QR hết hạn sau 10 phút. Bot tự xác nhận khi nhận được tiền — chuyển đúng nội dung." : "Deco Gift" },
-        timestamp: new Date().toISOString(),
-    };
+    return client.ui.message("auto.dg.payment", vars, {
+        buttons: open ? { cancel: { customId: `dg:cancelpay:${payment.id}` } } : {},
+        edit,
+        ephemeral,
+    });
 }
 
-function paymentCancelRow(paymentId) {
-    return new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`dg:cancelpay:${paymentId}`).setLabel("Hủy đơn").setStyle(ButtonStyle.Danger),
-    );
-}
+/** A line of auto.dg.payment.notes on its own (replies to the buyer). */
+const paymentNote = (client, slot, payment) => client.ui.card("auto.dg.payment.notes", payment ? { payment: paymentVars(payment) } : {}).text(slot);
 
 // ── Orders ─────────────────────────────────────────────────────────────────────
 
@@ -705,22 +723,24 @@ async function handlePaid(client, paymentId, bankMessage) {
             console.warn(`[AutoDecoGift] payment ${paymentId} paid but not found`);
             return null;
         }
-        await _serial(() => client.db.create(ORDER_DB, {
-            id: payment.id,
-            userId: payment.userId,
-            items: payment.items,
-            total: payment.total,
-            transferCode: payment.transferCode,
-            bankMessage: bankMessage ? String(bankMessage).slice(0, 800) : null,
-            paidAt: Date.now(),
-            status: "paid",
-            shopOrderId: null,
-            waitingUrl: null,
-            shopError: null,
-            tries: 0,
-            links: null,
-            updatedAt: Date.now(),
-        }));
+        await _serial(() =>
+            client.db.create(ORDER_DB, {
+                id: payment.id,
+                userId: payment.userId,
+                items: payment.items,
+                total: payment.total,
+                transferCode: payment.transferCode,
+                bankMessage: bankMessage ? String(bankMessage).slice(0, 800) : null,
+                paidAt: Date.now(),
+                status: "paid",
+                shopOrderId: null,
+                waitingUrl: null,
+                shopError: null,
+                tries: 0,
+                links: null,
+                updatedAt: Date.now(),
+            }),
+        );
         await removePayment(client, paymentId);
 
         const order = await _ensureShopOrder(client, paymentId);
@@ -728,20 +748,7 @@ async function handlePaid(client, paymentId, bankMessage) {
         if (!order.shopOrderId) {
             // The shop's bill DM did not go out — tell the buyer the money is in.
             const user = await client.users.fetch(order.userId).catch(() => null);
-            await user
-                ?.send({
-                    embeds: [
-                        client.embed(
-                            [
-                                `Mã thanh toán: \`${order.id}\``,
-                                `Số tiền: **${money(order.total)}**`,
-                                "✅ Đã nhận thanh toán Deco Gift. Admin sẽ duyệt và gửi link quà qua tin nhắn riêng.",
-                            ].join("\n"),
-                            { title: "Đã xác nhận thanh toán", color: 0x57f287 },
-                        ),
-                    ],
-                })
-                .catch(() => null);
+            await user?.send(client.ui.message("auto.dg.dm.paid", { order: orderVars(order), buyer: client.ui.user(user) })).catch(() => null);
         }
         return order;
     });
@@ -840,17 +847,20 @@ async function _cancelShop(client, id) {
     return order;
 }
 
+/** A line of auto.dg.admin (replies to the admin). */
+const adminText = (client, slot, vars = {}) => client.ui.card("auto.dg.admin", vars).text(slot);
+
 /** Admin: the gift links typed in the form, one per decor. → order */
 async function approve(client, id, adminId, links) {
     const res = await _withLock(id, async () => {
         const order = await getOrder(client, id);
-        if (!order) throw new Error("Không tìm thấy đơn.");
-        if (!["paid", "dm_failed"].includes(order.status)) throw new Error("Đơn này đã được xử lý.");
-        if (!order.shopOrderId) throw new Error("Đơn Shop chưa được tạo — bấm Thử lại trên tin đơn rồi duyệt.");
+        if (!order) throw new Error(adminText(client, "notFound"));
+        if (!["paid", "dm_failed"].includes(order.status)) throw new Error(adminText(client, "handled"));
+        if (!order.shopOrderId) throw new Error(adminText(client, "noShopYet"));
         _linkDrafts.delete(id);
         return _deliver(client, id, { adminId, links });
     });
-    if (!res) throw new Error("Đơn đang được xử lý, thử lại sau ít giây.");
+    if (!res) throw new Error(adminText(client, "busy"));
     return res;
 }
 
@@ -858,8 +868,8 @@ async function approve(client, id, adminId, links) {
 async function cancelOrder(client, id, adminId, reason) {
     const res = await _withLock(id, async () => {
         const order = await getOrder(client, id);
-        if (!order) throw new Error("Không tìm thấy đơn.");
-        if (!["paid", "dm_failed"].includes(order.status)) throw new Error("Chỉ hủy được đơn chưa giao link.");
+        if (!order) throw new Error(adminText(client, "notFound"));
+        if (!["paid", "dm_failed"].includes(order.status)) throw new Error(adminText(client, "cannotCancel"));
         await _update(client, id, {
             status: "cancelled",
             cancelledBy: adminId,
@@ -874,25 +884,14 @@ async function cancelOrder(client, id, adminId, reason) {
         _linkDrafts.delete(id);
         const done = await _cancelShop(client, id);
         const user = await client.users.fetch(order.userId).catch(() => null);
+        const admin = await client.users.fetch(adminId).catch(() => null);
         await user
-            ?.send({
-                embeds: [
-                    client.embed(
-                        [
-                            `Mã đơn: \`${done.shopOrderId || done.id}\`${done.shopOrderId ? ` (thanh toán \`${done.id}\`)` : ""}`,
-                            `Lý do: ${trunc(reason, 500)}`,
-                            "",
-                            `Bạn sẽ được hoàn **${money(done.total)}**: hãy tạo ticket và gửi mã đơn này cho admin.`,
-                        ].join("\n"),
-                        { title: "Đơn Deco Gift đã bị hủy", color: 0xed4245 },
-                    ),
-                ],
-            })
+            ?.send(client.ui.message("auto.dg.dm.cancelled", { order: orderVars(done), buyer: client.ui.user(user), admin: client.ui.user(admin), reason }))
             .catch(() => null);
         await refreshStaff(client, done);
         return done;
     });
-    if (!res) throw new Error("Đơn đang được xử lý, thử lại sau ít giây.");
+    if (!res) throw new Error(adminText(client, "busy"));
     return res;
 }
 
@@ -932,82 +931,45 @@ async function sweep(client) {
 
 // ── Staff channel ──────────────────────────────────────────────────────────────
 
-const STATUS_COLOR = {
-    paid: 0xfee75c,
-    delivering: 0x5865f2,
-    dm_failed: 0xed4245,
-    delivered: 0x57f287,
-    completed: 0x57f287,
-    cancelled: 0x95a5a6,
+/** Which text / colour slot of auto.dg.staff describes the order now. */
+const STATUS_SLOT = {
+    paid: ["paid", "colorPaid"],
+    delivering: ["delivering", "colorDelivering"],
+    dm_failed: ["dmFailed", "colorDmFailed"],
+    delivered: ["delivered", "colorDone"],
+    completed: ["completed", "colorDone"],
+    cancelled: ["cancelled", "colorCancelled"],
 };
 
-const DM_REASON = {
-    dm_blocked: "Khách chặn tin nhắn riêng (hoặc không còn chung server với bot gửi link)",
-    unknown_user: "Không tìm thấy tài khoản khách",
-};
+const staffVars = (client, o) => ({ order: orderVars(o), buyer: client.ui.user(client.users.cache.get(o.userId)) || { id: o.userId, mention: `<@${o.userId}>`, __text: `<@${o.userId}>` } });
 
-function _statusText(o) {
-    const err = o.lastError ? `\n-# Lỗi gần nhất: ${trunc(o.lastError, 200)}` : "";
-    const stuck = (o.tries || 0) >= MAX_TRIES ? "\n-# Đã ngừng tự thử lại — bấm Thử lại." : "";
-    switch (o.status) {
-        case "paid":
-            return o.shopOrderId
-                ? "⏳ **Chờ admin duyệt** — bấm Duyệt rồi điền link quà cho từng deco."
-                : `⏳ **Chờ admin duyệt** · ⚠️ chưa tạo được đơn Shop — bot tự thử lại mỗi 5 phút.${o.shopError ? `\n-# Lỗi: ${trunc(o.shopError, 200)}` : ""}${stuck}`;
-        case "delivering":
-            return `📨 **Đang giao link** (bởi <@${o.deliveredBy}>) — chưa có phản hồi, bot tự thử lại.${err}${stuck}`;
-        case "dm_failed":
-            return `⚠️ **Chưa giao được:** ${DM_REASON[o.lastError] || o.lastError}.\nNhờ khách mở tin nhắn riêng từ thành viên server rồi bấm **Gửi lại DM**.`;
-        case "delivered":
-            return `✅ **Đã giao link** bởi <@${o.deliveredBy}> lúc ${ts(o.deliveredAt)} · ⏳ đang chờ Shop hoàn thành đơn.${err}${stuck}`;
-        case "completed":
-            return `✅ **Hoàn thành** — giao bởi <@${o.deliveredBy}> lúc ${ts(o.deliveredAt || o.completedAt)}.${o.linksMasked?.length ? `\n-# ${o.linksMasked.join(" · ")}` : ""}`;
-        case "cancelled":
-            return `❌ **Đã hủy** bởi <@${o.cancelledBy}> lúc ${ts(o.cancelledAt)}\nLý do: ${o.cancelReason}${o.shopCancelPending ? `\n⏳ Đang hủy đơn Shop…${err}${stuck}` : ""}`;
-        default:
-            return o.status;
-    }
-}
-
-function _staffButtons(o) {
+function _staffButtons(card, o) {
     const b = [];
-    const retryBtn = (label = "Thử lại") =>
-        new ButtonBuilder().setCustomId(`dg:retry:${o.id}`).setLabel(label).setEmoji("🔁").setStyle(ButtonStyle.Secondary);
-    const cancelBtn = new ButtonBuilder().setCustomId(`dg:reject:${o.id}`).setLabel("Hủy đơn").setEmoji("❌").setStyle(ButtonStyle.Danger);
+    const btn = (id, slot, style = ButtonStyle.Secondary) => card.applyButton(new ButtonBuilder().setCustomId(`${id}:${o.id}`).setStyle(style), slot);
     if (o.status === "paid") {
-        if (o.shopOrderId)
-            b.push(new ButtonBuilder().setCustomId(`dg:approve:${o.id}`).setLabel("Duyệt & giao link").setEmoji("✅").setStyle(ButtonStyle.Success));
-        else b.push(retryBtn("Thử lại tạo đơn Shop"));
-        b.push(cancelBtn);
+        if (o.shopOrderId) b.push(btn("dg:approve", "approve", ButtonStyle.Success));
+        else b.push(btn("dg:retry", "retryShop"));
+        b.push(btn("dg:reject", "reject", ButtonStyle.Danger));
     } else if (o.status === "dm_failed") {
-        b.push(retryBtn("Gửi lại DM"));
-        b.push(new ButtonBuilder().setCustomId(`dg:approve:${o.id}`).setLabel("Nhập lại link").setEmoji("✏️").setStyle(ButtonStyle.Secondary));
-        b.push(cancelBtn);
+        b.push(btn("dg:retry", "resend"));
+        b.push(btn("dg:approve", "relink"));
+        b.push(btn("dg:reject", "reject", ButtonStyle.Danger));
     } else if (o.status === "delivering" || o.status === "delivered" || (o.status === "cancelled" && o.shopCancelPending)) {
-        b.push(retryBtn());
+        b.push(btn("dg:retry", "retry"));
     }
     return b;
 }
 
 function staffView(client, o) {
-    const c = new ContainerBuilder().setAccentColor(STATUS_COLOR[o.status] ?? accent(client));
-    c.addTextDisplayComponents(
-        text(
-            [
-                "## 🎁 Đơn Deco Gift",
-                `**Mã đơn:** ${o.shopOrderId ? `\`${o.shopOrderId}\`${o.waitingUrl ? ` · [hàng chờ](${o.waitingUrl})` : ""}` : "*chưa có*"} · thanh toán \`${o.id}\``,
-                `**Khách:** <@${o.userId}> (\`${o.userId}\`)`,
-                `**Tổng:** ${money(o.total)} · đã thanh toán lúc ${ts(o.paidAt)}`,
-            ].join("\n"),
-        ),
-    );
-    o.items.forEach((it, i) =>
-        addDecor(c, it, `**${i + 1}. [${it.name}](${shopUrl(it.sku_id)})**\n${it.typeLabel} · ${money(it.price)}`),
-    );
+    const card = client.ui.card("auto.dg.staff", staffVars(client, o));
+    const [statusSlot, colorSlot] = STATUS_SLOT[o.status] || ["paid", "colorPaid"];
+    const c = new ContainerBuilder().setAccentColor(parseColor(card.text(colorSlot)) ?? card.color ?? 0xfee75c);
+    c.addTextDisplayComponents(text(card.text("header")));
+    o.items.forEach((it, i) => addDecor(c, it, card.text("item", itemVars(it, { index: i + 1 }))));
     c.addSeparatorComponents(sep());
-    if (o.bankMessage) c.addTextDisplayComponents(text(`**Tin ngân hàng** (kiểm tra số tiền):\n\`\`\`\n${trunc(o.bankMessage, 600)}\n\`\`\``));
-    c.addTextDisplayComponents(text(_statusText(o)));
-    const buttons = _staffButtons(o);
+    if (o.bankMessage) c.addTextDisplayComponents(text(card.text("bank")));
+    c.addTextDisplayComponents(text(card.text(o.status === "paid" && !o.shopOrderId ? "paidNoShop" : statusSlot)));
+    const buttons = _staffButtons(card, o);
     if (buttons.length) c.addActionRowComponents(new ActionRowBuilder().addComponents(...buttons));
     return { components: [c] };
 }
@@ -1032,14 +994,16 @@ async function refreshStaff(client, order) {
     }
 }
 
-function linksModal(order) {
+function linksModal(client, order) {
+    const card = client.ui.card("auto.dg.staff", staffVars(client, order));
     const draft = _linkDrafts.get(order.id) || order.links || [];
-    const modal = new ModalBuilder().setCustomId(`dg:links:${order.id}`).setTitle(trunc(`Giao deco – ${order.shopOrderId}`, 45));
+    const modal = new ModalBuilder().setCustomId(`dg:links:${order.id}`).setTitle(trunc(card.text("linksTitle") || order.id, 45));
     order.items.forEach((it, i) => {
+        const vars = itemVars(it, { index: i + 1 });
         const input = new TextInputBuilder()
             .setCustomId(`l${i}`)
-            .setLabel(trunc(`#${i + 1} ${it.name}`, 45))
-            .setPlaceholder("https://discord.gift/...")
+            .setLabel(trunc(card.text("linkLabel", vars) || `#${i + 1}`, 45))
+            .setPlaceholder(trunc(card.text("linkPlaceholder", vars), 100) || "https://discord.gift/...")
             .setStyle(TextInputStyle.Short)
             .setMaxLength(200)
             .setRequired(true);
@@ -1053,14 +1017,14 @@ function linksModal(order) {
  * The approve form's values → { links } or { error } (the typed values are kept
  * so the form opens filled in next time).
  */
-function readLinks(order, fields) {
+function readLinks(client, order, fields) {
     const raw = order.items.map((_, i) => fields.getTextInputValue(`l${i}`) || "");
     const links = raw.map(parseGiftLink);
     const bad = links.map((l, i) => (l ? null : i + 1)).filter(Boolean);
     const codes = links.filter(Boolean);
     let error = null;
-    if (bad.length) error = `Link #${bad.join(", #")} không phải link quà Discord (dạng \`https://discord.gift/...\`).`;
-    else if (new Set(codes).size !== codes.length) error = "Có link bị trùng — mỗi deco cần một link riêng.";
+    if (bad.length) error = adminText(client, "badLinks", { bad: bad.join(", #") });
+    else if (new Set(codes).size !== codes.length) error = adminText(client, "duplicateLinks");
     if (error) {
         _linkDrafts.set(order.id, raw);
         setTimeout(() => _linkDrafts.delete(order.id), 15 * 60 * 1000).unref?.();
@@ -1069,15 +1033,16 @@ function readLinks(order, fields) {
     return { links };
 }
 
-function rejectModal(order) {
+function rejectModal(client, order) {
+    const card = client.ui.card("auto.dg.staff", staffVars(client, order));
     return new ModalBuilder()
         .setCustomId(`dg:rejectm:${order.id}`)
-        .setTitle(trunc(`Hủy đơn – ${order.shopOrderId || order.id}`, 45))
+        .setTitle(trunc(card.text("rejectTitle") || order.id, 45))
         .addComponents(
             new ActionRowBuilder().addComponents(
                 new TextInputBuilder()
                     .setCustomId("reason")
-                    .setLabel("Lý do (gửi cho khách)")
+                    .setLabel(trunc(card.text("rejectLabel") || "Lý do", 45))
                     .setStyle(TextInputStyle.Paragraph)
                     .setMaxLength(500)
                     .setRequired(true),
@@ -1098,6 +1063,7 @@ module.exports = {
     searchView,
     cartView,
     searchModal,
+    note,
     // cart
     cartOf,
     addSkus,
@@ -1112,8 +1078,8 @@ module.exports = {
     cancelPayment,
     removePayment,
     expireStale,
-    paymentEmbed,
-    paymentCancelRow,
+    paymentMessage,
+    paymentNote,
     handlePaid,
     // orders
     getOrder,
@@ -1126,5 +1092,7 @@ module.exports = {
     linksModal,
     readLinks,
     rejectModal,
+    adminText,
+    orderVars,
     parseGiftLink,
 };

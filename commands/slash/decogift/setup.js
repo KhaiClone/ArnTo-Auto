@@ -12,10 +12,12 @@ module.exports = {
         const missing = dg.missingConfig(client);
         if (missing.length) {
             return interaction.editReply({
-                content: `Deco Gift chưa bật được — thiếu trong .env: ${missing.map((m) => `\`${m}\``).join(", ")}.`,
+                content: dg.adminText(client, "setupMissing", { error: missing.map((m) => `\`${m}\``).join(", ") }),
             });
         }
-        await interaction.channel.send(dg.panelMessage(client));
-        await interaction.editReply({ content: "✅ Đã gửi panel Deco Gift vào kênh này." });
+        const message = await interaction.channel.send(dg.panelMessage(client));
+        // The Embeds page can re-render every panel posted this way.
+        await client.ui.track("auto.dg.panel", message);
+        await interaction.editReply({ content: dg.adminText(client, "setupDone") });
     },
 };

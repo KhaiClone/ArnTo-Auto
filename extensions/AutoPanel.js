@@ -100,51 +100,67 @@ class AutoPanel {
     _registerRecoveryHandler() {
         if (!this.client.autoBank) return;
 
-        this.client.autoBank.registerMissedHandler(
-            "panel_payment",
-            async (client, entry) => {
-                const { context } = entry;
-                if (!context) return;
-
-                try {
-                    if (context.type === "extend") {
-                        await this.extendBot(context.botId, context.value);
-                        console.log(
-                            `[AutoPanel] Recovered payment for bot ${context.botId} (extended ${context.value} months)`,
-                        );
-                        this._notifyUser(
-                            context.userId,
-                            `✅ Đã nhận được thanh toán! Bot của bạn đã được gia hạn thêm **${context.value}** tháng.`,
-                        );
-                    } else if (context.type === "upgrade") {
-                        await this.upgradeBot(context.botId, context.value);
-                        console.log(
-                            `[AutoPanel] Recovered payment for bot ${context.botId} (upgraded ${context.value} MB RAM)`,
-                        );
-                        this._notifyUser(
-                            context.userId,
-                            `✅ Đã nhận được thanh toán! RAM của bot đã được nâng cấp thêm **${context.value}** MB.`,
-                        );
-                    }
-                } catch (error) {
-                    console.error(
-                        "[AutoPanel] Recovery failed:",
-                        error.message,
-                    );
-                    this._notifyUser(
-                        context.userId,
-                        `❌ Đã nhận được thanh toán, nhưng có lỗi xảy ra khi áp dụng nâng cấp. Vui lòng liên hệ hỗ trợ. (Bot ID: ${context.botId})`,
-                    );
-                }
-            },
-        );
+        this.client.autoBank.registerMissedHandler("panel_payment", async (client, entry) => {
+            const { context } = entry;
+            if (!context) return;
+            await this.applyPayment(context, "recovered");
+        });
     }
 
-    async _notifyUser(userId, message) {
+    /** Applies a paid extend / upgrade and DMs the buyer (templates auto.panelbot.dm.*). */
+    async applyPayment(context, via) {
+        try {
+            if (context.type === "extend") {
+                await this.extendBot(context.botId, context.value);
+                console.log(`[AutoPanel] Payment applied for bot ${context.botId} (extended ${context.value} months, ${via})`);
+            } else if (context.type === "upgrade") {
+                await this.upgradeBot(context.botId, context.value);
+                console.log(`[AutoPanel] Payment applied for bot ${context.botId} (upgraded ${context.value} MB RAM, ${via})`);
+            } else return;
+            await this._notifyUser(context.userId, "auto.panelbot.dm.applied", { payment: AutoPanel.paymentVars(context), via });
+        } catch (error) {
+            console.error("[AutoPanel] Applying payment failed:", error.message);
+            await this._notifyUser(context.userId, "auto.panelbot.dm.failed", { payment: AutoPanel.paymentVars(context), via, error: error.message });
+        }
+    }
+
+    /** A customer's bot as templates see it (type customerBot). */
+    static botVars(bot = {}) {
+        const live = bot.live || {};
+        return {
+            id: bot._id ?? "",
+            botID: bot.botID ?? "",
+            name: bot.name || bot.botID || "",
+            status: live.status || "",
+            online: live.status === "online",
+            maxMemory: bot.maxMemory || "",
+            restarts: live.restarts || 0,
+            uptime: live.uptime || null,
+            expiresAt: bot.expiresAt || null,
+            __text: bot.name || bot.botID || "",
+        };
+    }
+
+    /** An extend / upgrade payment as templates see it (type botPayment). */
+    static paymentVars(context = {}, extra = {}) {
+        return {
+            action: context.type ?? "",
+            botId: context.botId ?? "",
+            botName: context.botName ?? context.botId ?? "",
+            value: context.value ?? 0,
+            amount: context.amount ?? 0,
+            transferCode: context.transferCode ?? "",
+            qrUrl: context.qrUrl ?? null,
+            expireMinutes: context.expireMinutes ?? 10,
+            ...extra,
+        };
+    }
+
+    async _notifyUser(userId, key, vars = {}) {
         try {
             const user = await this.client.users.fetch(userId);
             if (user) {
-                await user.send(message).catch(() => {});
+                await user.send(this.client.ui.message(key, { user: this.client.ui.user(user), ...vars })).catch(() => {});
             }
         } catch (err) {
             // Ignore

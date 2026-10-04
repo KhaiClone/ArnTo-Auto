@@ -6,75 +6,86 @@ const {
     ModalBuilder,
     TextInputBuilder,
     TextInputStyle,
-    EmbedBuilder,
-    AttachmentBuilder,
 } = require("discord.js");
-const crypto = require("crypto");
 const { nanoid } = require("nanoid");
+const AutoPanel = require("../../../extensions/AutoPanel");
+
+// Every word here lives in templates/panelBot.js (auto.panelbot.*).
+
+const QR_MINUTES = 10;
 
 const generateVietQR = (client, amount, transferCode) => {
     const s = client.configs.settings;
     return `https://img.vietqr.io/image/${s.bankCode}-${s.bankAccount}-qr_only.png?addInfo=${encodeURIComponent(transferCode)}&accountName=${encodeURIComponent(s.bankHolder)}&amount=${amount}`;
 };
 
-const renderBotStatus = (bot) => {
-    const live = bot.live || {};
-    const statusEmoji = live.status === "online" ? "🟢" : "🔴";
-    const statusText = live.status ? live.status.toUpperCase() : "NGOẠI TUYẾN";
+/** Words of the panel-bot flow (template auto.panelbot.flow). */
+const flow = (client, vars = {}) => client.ui.card("auto.panelbot.flow", { user: null, ...vars });
+const cut = (s, n, fallback) => (s || fallback).slice(0, n);
+const say = (client, slot, vars) => ({ content: flow(client, vars).text(slot) });
 
-    const embed = new EmbedBuilder()
-        .setTitle(`📊 CHI TIẾT BOT: ${bot.name || bot.botID}`)
-        .setColor(live.status === "online" ? 0x2ecc71 : 0xe74c3c)
-        .addFields(
-            {
-                name: "📌 Tên Bot",
-                value: `\`${bot.name || "N/A"}\``,
-                inline: true,
-            },
-            {
-                name: "🆔 Bot ID",
-                value: `\`${bot.botID}\``,
-                inline: true,
-            },
-            {
-                name: "📡 Trạng thái",
-                value: `${statusEmoji} **${statusText}**`,
-                inline: true,
-            },
-            {
-                name: "💾 RAM tối đa",
-                value: `\`${bot.maxMemory || "128M"}\``,
-                inline: true,
-            },
-            {
-                name: "🔄 Khởi động lại",
-                value: `\`${live.restarts || 0}\` lần`,
-                inline: true,
-            },
+/** One bot's details (template auto.panelbot.status). */
+const statusMessage = (client, bot) => client.ui.message("auto.panelbot.status", { customerBot: AutoPanel.botVars(bot) });
+
+function _botSelect(client, actionType, bots) {
+    const t = flow(client, { action: actionType });
+    return new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+            .setCustomId(`panel_select:${actionType}`)
+            .setPlaceholder(t.placeholder("bot") || "Bot")
+            .addOptions(
+                bots.slice(0, 25).map((b) => ({
+                    ...t.option("bot", { customerBot: AutoPanel.botVars(b) }),
+                    value: b._id,
+                })),
+            ),
+    );
+}
+
+function _manageRow(client, botId) {
+    const t = flow(client);
+    const button = (slot, style) => t.applyButton(new ButtonBuilder().setCustomId(`panel_action:${slot}:${botId}`).setStyle(style), slot);
+    return new ActionRowBuilder().addComponents(
+        button("status", ButtonStyle.Secondary),
+        button("start", ButtonStyle.Success),
+        button("restart", ButtonStyle.Primary),
+        button("stop", ButtonStyle.Danger),
+    );
+}
+
+function _extendModal(client, botId) {
+    const t = flow(client);
+    return new ModalBuilder()
+        .setCustomId(`panel_modal:extend:${botId}`)
+        .setTitle(cut(t.text("extendTitle"), 45, "Gia hạn"))
+        .addComponents(
+            new ActionRowBuilder().addComponents(
+                new TextInputBuilder()
+                    .setCustomId("months")
+                    .setLabel(cut(t.text("extendLabel"), 45, "Số tháng"))
+                    .setStyle(TextInputStyle.Short)
+                    .setRequired(true)
+                    .setValue(cut(t.text("extendDefault"), 100, "1")),
+            ),
         );
+}
 
-    if (live.uptime) {
-        embed.addFields({
-            name: "⏱️ Thời gian chạy",
-            value: `<t:${Math.floor(live.uptime / 1000)}:R>`,
-            inline: true,
-        });
-    }
-
-    if (bot.expiresAt) {
-        embed.addFields({
-            name: "📅 Ngày hết hạn",
-            value: `🕒 <t:${Math.floor(bot.expiresAt / 1000)}:f>\n⏳ (<t:${Math.floor(bot.expiresAt / 1000)}:R>)`,
-            inline: false,
-        });
-    }
-
-    embed
-        .setFooter({ text: "Dữ liệu được cập nhật thời gian thực" })
-        .setTimestamp();
-
-    return embed;
-};
+function _upgradeModal(client, botId) {
+    const t = flow(client);
+    return new ModalBuilder()
+        .setCustomId(`panel_modal:upgrade:${botId}`)
+        .setTitle(cut(t.text("upgradeTitle"), 45, "Nâng cấp"))
+        .addComponents(
+            new ActionRowBuilder().addComponents(
+                new TextInputBuilder()
+                    .setCustomId("additionalRam")
+                    .setLabel(cut(t.text("upgradeLabel"), 45, "MB RAM"))
+                    .setStyle(TextInputStyle.Short)
+                    .setRequired(true)
+                    .setPlaceholder(cut(t.text("upgradePlaceholder"), 100, "64")),
+            ),
+        );
+}
 
 module.exports = {
     name: "interactionCreate",
@@ -86,42 +97,18 @@ module.exports = {
             interaction.isButton() &&
             interaction.customId.startsWith("panel:")
         ) {
-            const actionType = interaction.customId.split(":")[1]; // manage, extend, upgrade
+            const actionType = interaction.customId.split(":")[1]; // status, manage, extend, upgrade
 
             await interaction.deferReply({ ephemeral: true });
 
             const bots = await client.autoPanel.fetchBots(interaction.user.id);
             if (!bots || bots.length === 0) {
-                return interaction.editReply({
-                    content: "❌ Bạn chưa có bot nào trong hệ thống.",
-                });
+                return interaction.editReply(say(client, "noBots"));
             }
 
-            const actionName =
-                actionType === "manage"
-                    ? "Quản lý"
-                    : actionType === "extend"
-                      ? "Gia hạn"
-                      : actionType === "upgrade"
-                        ? "Nâng cấp"
-                        : "Trạng thái";
-
-            const selectMenu = new StringSelectMenuBuilder()
-                .setCustomId(`panel_select:${actionType}`)
-                .setPlaceholder("Vui lòng chọn một Bot")
-                .addOptions(
-                    bots.map((b) => ({
-                        label: b.name || b.botID,
-                        description: `RAM: ${b.maxMemory || "128M"} | Trạng thái: ${b.live?.status || "offline"}`,
-                        value: b._id,
-                        emoji: "🤖",
-                    })),
-                );
-
-            const row = new ActionRowBuilder().addComponents(selectMenu);
             return interaction.editReply({
-                content: `🔍 Bạn đang chọn: **${actionName}**. Vui lòng chọn Bot:`,
-                components: [row],
+                ...say(client, "chooseBot", { action: actionType }),
+                components: [_botSelect(client, actionType, bots)],
             });
         }
 
@@ -139,82 +126,22 @@ module.exports = {
                 );
                 const bot = bots.find((b) => b._id === botId);
                 if (!bot) {
-                    return interaction.reply({
-                        content: "❌ Không tìm thấy thông tin Bot.",
-                        ephemeral: true,
-                    });
+                    return interaction.reply({ ...say(client, "botNotFound"), ephemeral: true });
                 }
 
-                const embed = renderBotStatus(bot);
-                return interaction.reply({ embeds: [embed], ephemeral: true });
+                return interaction.reply({ ...statusMessage(client, bot), ephemeral: true });
             }
 
             if (actionType === "manage") {
-                const row = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`panel_action:status:${botId}`)
-                        .setLabel("Trạng thái")
-                        .setStyle(ButtonStyle.Secondary)
-                        .setEmoji("📊"),
-                    new ButtonBuilder()
-                        .setCustomId(`panel_action:start:${botId}`)
-                        .setLabel("Khởi động")
-                        .setStyle(ButtonStyle.Success)
-                        .setEmoji("▶️"),
-                    new ButtonBuilder()
-                        .setCustomId(`panel_action:restart:${botId}`)
-                        .setLabel("Khởi động lại")
-                        .setStyle(ButtonStyle.Primary)
-                        .setEmoji("🔄"),
-                    new ButtonBuilder()
-                        .setCustomId(`panel_action:stop:${botId}`)
-                        .setLabel("Dừng")
-                        .setStyle(ButtonStyle.Danger)
-                        .setEmoji("⏹️"),
-                );
-
                 return interaction.reply({
-                    content: "🎯 Chọn hành động cho Bot này:",
-                    components: [row],
+                    ...say(client, "chooseAction"),
+                    components: [_manageRow(client, botId)],
                     ephemeral: true,
                 });
             }
 
-            if (actionType === "extend") {
-                const modal = new ModalBuilder()
-                    .setCustomId(`panel_modal:extend:${botId}`)
-                    .setTitle("Gia hạn thời gian chạy Bot");
-
-                const input = new TextInputBuilder()
-                    .setCustomId("months")
-                    .setLabel("Số tháng muốn gia hạn")
-                    .setStyle(TextInputStyle.Short)
-                    .setRequired(true)
-                    .setValue("1");
-
-                modal.addComponents(
-                    new ActionRowBuilder().addComponents(input),
-                );
-                return interaction.showModal(modal);
-            }
-
-            if (actionType === "upgrade") {
-                const modal = new ModalBuilder()
-                    .setCustomId(`panel_modal:upgrade:${botId}`)
-                    .setTitle("Nâng cấp dung lượng RAM");
-
-                const input = new TextInputBuilder()
-                    .setCustomId("additionalRam")
-                    .setLabel("Số MB RAM muốn thêm (vd: 64, 128, ...)")
-                    .setStyle(TextInputStyle.Short)
-                    .setRequired(true)
-                    .setPlaceholder("64");
-
-                modal.addComponents(
-                    new ActionRowBuilder().addComponents(input),
-                );
-                return interaction.showModal(modal);
-            }
+            if (actionType === "extend") return interaction.showModal(_extendModal(client, botId));
+            if (actionType === "upgrade") return interaction.showModal(_upgradeModal(client, botId));
         }
 
         // ── 3. Manage Actions (Start/Stop/Restart) ─────────────────────────────
@@ -231,13 +158,10 @@ module.exports = {
                 );
                 const bot = bots.find((b) => b._id === botId);
                 if (!bot) {
-                    return interaction.editReply({
-                        content: "❌ Không tìm thấy thông tin Bot.",
-                    });
+                    return interaction.editReply(say(client, "botNotFound"));
                 }
 
-                const embed = renderBotStatus(bot);
-                return interaction.editReply({ embeds: [embed] });
+                return interaction.editReply(statusMessage(client, bot));
             }
 
             await interaction.deferReply({ ephemeral: true });
@@ -247,13 +171,9 @@ module.exports = {
                     botId,
                     action,
                 );
-                return interaction.editReply({
-                    content: `✅ Thành công: ${result.message}`,
-                });
+                return interaction.editReply(say(client, "actionOk", { action, message: result.message }));
             } catch (err) {
-                return interaction.editReply({
-                    content: `❌ Thất bại: ${err.message}`,
-                });
+                return interaction.editReply(say(client, "actionFailed", { action, error: err.message }));
             }
         }
 
@@ -269,23 +189,18 @@ module.exports = {
             const bots = await client.autoPanel.fetchBots(interaction.user.id);
             const bot = bots.find((b) => b._id === botId);
             if (!bot) {
-                return interaction.editReply({
-                    content: "❌ Không tìm thấy Bot.",
-                });
+                return interaction.editReply(say(client, "botNotFound"));
             }
 
             let amount = 0;
             let value = 0; // months or additionalRam
-            let description = "";
 
             if (actionType === "extend") {
                 const monthsStr =
                     interaction.fields.getTextInputValue("months");
                 value = parseInt(monthsStr, 10);
                 if (isNaN(value) || value <= 0) {
-                    return interaction.editReply({
-                        content: "❌ Số tháng không hợp lệ.",
-                    });
+                    return interaction.editReply(say(client, "badMonths"));
                 }
 
                 let currentRam = 128;
@@ -301,16 +216,12 @@ module.exports = {
                 }
 
                 amount = pricePerMonth * value;
-                description = `Gia hạn bot **${bot.name || bot.botID}** thêm **${value}** tháng.`;
             } else if (actionType === "upgrade") {
                 const ramStr =
                     interaction.fields.getTextInputValue("additionalRam");
                 value = parseInt(ramStr, 10);
                 if (isNaN(value) || value <= 0 || value % 64 !== 0) {
-                    return interaction.editReply({
-                        content:
-                            "❌ Dung lượng RAM không hợp lệ. Phải là bội số của 64 (vd: 64, 128).",
-                    });
+                    return interaction.editReply(say(client, "badRam"));
                 }
 
                 let remainingMonths = 1;
@@ -322,12 +233,11 @@ module.exports = {
                     if (remainingMonths < 1) remainingMonths = 1;
                 }
                 amount = 5000 * (value / 64) * remainingMonths;
-                description = `Nâng cấp bot **${bot.name || bot.botID}** thêm **${value}MB** RAM.`;
             }
 
             // Create pending payment in AutoBank
             const transferCode = `${nanoid(8).replaceAll("-", "").replaceAll("_", "")} Chuyen tien`;
-            const expireAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+            const expireAt = Date.now() + QR_MINUTES * 60 * 1000;
 
             const pendingData = {
                 customId: transferCode,
@@ -349,64 +259,22 @@ module.exports = {
                 transferCode,
                 pendingData.context,
                 async (err, data) => {
-                    if (err) {
-                        // Handled by recovery or DM in ready.js/AutoBank.js if it expires
-                        return;
-                    }
-                    // If it succeeds while bot is online:
-                    try {
-                        if (data.context.type === "extend") {
-                            await client.autoPanel.extendBot(
-                                data.context.botId,
-                                data.context.value,
-                            );
-                            client.autoPanel._notifyUser(
-                                data.context.userId,
-                                `✅ Payment received! Your bot has been extended by **${data.context.value}** months.`,
-                            );
-                        } else if (data.context.type === "upgrade") {
-                            await client.autoPanel.upgradeBot(
-                                data.context.botId,
-                                data.context.value,
-                            );
-                            client.autoPanel._notifyUser(
-                                data.context.userId,
-                                `✅ Payment received! Your bot's RAM has been upgraded by **${data.context.value}** MB.`,
-                            );
-                        }
-                    } catch (e) {
-                        client.autoPanel._notifyUser(
-                            data.context.userId,
-                            `❌ Payment received, but an error occurred while applying the upgrade. Please contact support. (Bot ID: ${data.context.botId})`,
-                        );
-                    }
+                    // An expiry is handled by recovery or DM in ready.js/AutoBank.js.
+                    if (err) return;
+                    // It succeeded while the bot is online.
+                    await client.autoPanel.applyPayment(data.context, "live");
                 },
             );
 
             // Send QR code to user
-            const qrUrl = generateVietQR(client, amount, transferCode);
-
-            const embed = new EmbedBuilder()
-                .setTitle(
-                    "💳 THANH TOÁN: " +
-                        (actionType === "extend" ? "GIA HẠN" : "NÂNG CẤP"),
-                )
-                .setDescription(
-                    [
-                        `💡 **Nội dung:** ${description}`,
-                        "",
-                        `💵 **Số tiền:** \`${Number(amount).toLocaleString("vi-VN")} VNĐ\``,
-                        `📝 **Nội dung chuyển khoản:** \`${transferCode}\``,
-                        "",
-                        "👉 Quét mã QR bên dưới bằng ứng dụng ngân hàng của bạn. Hệ thống sẽ tự động cập nhật sau vài giây sau khi nhận được tiền.",
-                    ].join("\n"),
-                )
-                .setImage(qrUrl)
-                .setColor(0x5865f2)
-                .setFooter({ text: "⚠️ Mã QR sẽ hết hạn sau 10 phút." })
-                .setTimestamp();
-
-            return interaction.editReply({ embeds: [embed] });
+            const payment = AutoPanel.paymentVars(pendingData.context, {
+                botName: bot.name || bot.botID,
+                amount,
+                transferCode,
+                qrUrl: generateVietQR(client, amount, transferCode),
+                expireMinutes: QR_MINUTES,
+            });
+            return interaction.editReply(client.ui.message("auto.panelbot.payment", { payment }));
         }
     },
 };

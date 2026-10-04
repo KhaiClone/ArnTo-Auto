@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
-const { failOrder } = require("../../../extensions/AutoRobux");
+const { failOrder, orderVars } = require("../../../extensions/AutoRobux");
 
 module.exports = {
     deferReply: { ephemeral: true },
@@ -29,54 +29,12 @@ module.exports = {
             .trim();
         const refundAmount = interaction.options.getInteger("refund_amount");
         const result = await failOrder(client, paymentId, refundAmount);
-
-        if (!result.ok) {
-            return interaction.editReply({
-                embeds: [
-                    client.embed(result.reason, {
-                        title: "Lỗi",
-                        color: 0xed4245,
-                    }),
-                ],
-            });
-        }
-
-        return interaction.editReply({
-            embeds: [
-                client.embed("", {
-                    title: "❌ Đơn thất bại — Đã gửi mã hoàn tiền",
-                    color: 0xed4245,
-                    fields: [
-                        {
-                            name: "Mã đơn",
-                            value: `\`${paymentId}\``,
-                            inline: true,
-                        },
-                        {
-                            name: "Khách hàng",
-                            value: `<@${result.entry.userId}>`,
-                            inline: true,
-                        },
-                        {
-                            name: "Số Robux",
-                            value: `**${result.entry.robux.toLocaleString()} Robux**`,
-                            inline: true,
-                        },
-                        {
-                            name: "Số tiền hoàn",
-                            value: `**${result.entry.price.toLocaleString("vi-VN")}đ**`,
-                            inline: true,
-                        },
-                        {
-                            name: "Mã hoàn tiền",
-                            value: `\`\`\`${result.refundCode}\`\`\``,
-                            inline: false,
-                        },
-                    ],
-                    description: "Mã hoàn tiền đã được gửi cho khách qua DM.",
-                    timestamp: true,
-                }),
-            ],
-        });
+        if (!result.ok) return interaction.editReply(client.ui.message("auto.robux.cmd.error", { reason: result.reason }));
+        return interaction.editReply(
+            client.ui.message("auto.robux.cmd.failed", {
+                order: orderVars({ ...result.entry, paymentId }),
+                refund: { code: result.refundCode, amount: refundAmount ?? result.entry.price },
+            }),
+        );
     },
 };

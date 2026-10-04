@@ -7,10 +7,13 @@ module.exports = {
                 (e) => e.data.name === interaction.commandName,
             );
             if (!command) {
-                return interaction.reply({
-                    ephemeral: true,
-                    content: "Không tìm thấy lệnh, vui lòng thử lại sau.",
-                });
+                return interaction.reply(
+                    client.ui.message(
+                        "auto.system.unknownCommand",
+                        { user: client.ui.user(interaction.user), command: interaction.commandName },
+                        { ephemeral: true },
+                    ),
+                );
             }
             if (command.deferReply)
                 await interaction.deferReply(command.deferReply);

@@ -1974,12 +1974,7 @@ async function createQuestPayment(client, { userId, accountId, questIds }) {
                 const {
                     cancelOrderLog,
                 } = require("../functions/autoQuestHelpers");
-                await cancelOrderLog(
-                    client,
-                    userId,
-                    accountId,
-                    "🚫 Đã hủy / Hết hạn thanh toán",
-                ).catch(() => null);
+                await cancelOrderLog(client, userId, accountId, "expired").catch(() => null);
                 return;
             }
             const paidPayment = await _markPaid(client, payment.id);
@@ -2013,25 +2008,14 @@ async function createQuestPayment(client, { userId, accountId, questIds }) {
             try {
                 const user = await client.users.fetch(userId).catch(() => null);
                 if (user)
-                    await user.send({
-                        embeds: [
-                            client.embed(
-                                [
-                                    `Mã đơn: \`${payment.id}\``,
-                                    `Số tiền: ${Number(amount).toLocaleString("vi-VN")}đ`,
-                                    pendingToken
-                                        ? `⚠️ Token account đã die trong lúc chờ thanh toán. Vào panel Auto Quest và bấm nút **🔑 Cập nhật token** để gửi lại token — bot sẽ tự chạy ${selectedQuestIds.length} quest đã mua (đã lưu, không mất).`
-                                        : `Đã mở chạy ${selectedQuestIds.length} quest đã chọn.`,
-                                ].join("\n"),
-                                {
-                                    title: pendingToken
-                                        ? "Đã thanh toán — cần cập nhật token"
-                                        : "Đã xác nhận thanh toán",
-                                    color: pendingToken ? 0xfee75c : 0x57f287,
-                                },
-                            ),
-                        ],
-                    });
+                    await user.send(
+                        client.ui.message("auto.quest.dm.paid", {
+                            payment: { id: payment.id, amount: Number(amount), count: selectedQuestIds.length, __text: payment.id },
+                            user: client.ui.user(user),
+                            pendingToken,
+                            via: "live",
+                        }),
+                    );
             } catch (e) {
                 console.warn(`[autoQuest] DM notify error: ${e.message}`);
             }

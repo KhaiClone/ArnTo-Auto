@@ -20,7 +20,25 @@ const {
     unlockPaymentIfPaid,
     sendQuestDoneNotice,
     sendQuestOrderDoneNotice,
+    accountVars,
 } = require("../../../functions/autoQuestHelpers");
+
+// Every DM here is a template (templates/quest.js, badge.js, robux.js).
+
+/** A DM to a buyer; never throws (closed DMs, unknown user …). */
+async function dmUser(client, userId, key, vars = {}) {
+    const user = await client.users.fetch(userId).catch(() => null);
+    if (!user) return;
+    await user.send(client.ui.message(key, { user: client.ui.user(user), ...vars })).catch(() => null);
+}
+
+/** "Payment received" for a single-quest order (template auto.quest.dm.paid). */
+const questPaidDm = (client, userId, paymentId, amount, pendingToken, via) =>
+    dmUser(client, userId, "auto.quest.dm.paid", {
+        payment: { id: paymentId, amount: Number(amount), __text: paymentId },
+        pendingToken,
+        via,
+    });
 
 module.exports = {
     name: "clientReady",
@@ -82,30 +100,7 @@ module.exports = {
                 ).catch(() => false);
                 const pendingToken = unlockResult === "pending_token";
 
-                const user = await client.users.fetch(userId).catch(() => null);
-                if (user) {
-                    await user
-                        .send({
-                            embeds: [
-                                client.embed(
-                                    [
-                                        `Mã đơn: \`${paymentId}\``,
-                                        `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
-                                        pendingToken
-                                            ? "⚠️ Token account đã die. **Nhập lại token** để chạy quest đã mua (đã lưu, không mất)."
-                                            : "Đã xác nhận thanh toán. Đã mở chạy quest đã chọn.",
-                                    ].join("\n"),
-                                    {
-                                        title: pendingToken
-                                            ? "Đã thanh toán — cần nhập lại token"
-                                            : "Đã xác nhận thanh toán",
-                                        color: pendingToken ? 0xfee75c : 0x57f287,
-                                    },
-                                ),
-                            ],
-                        })
-                        .catch(() => null);
-                }
+                await questPaidDm(client, userId, paymentId, entry.amount, pendingToken, "missed");
             },
         );
 
@@ -172,35 +167,13 @@ module.exports = {
                 monthlyExpiresAt,
             }) => {
                 try {
-                    const user = await client.users.fetch(userId);
+                    const account = accountVars(accountId, username);
+                    const dm = (key, vars = {}) => dmUser(client, userId, key, { account, ...vars });
 
                     if (type === "token_dead") {
                         // Update order log to show paused state (not cancelled — quest may resume after token refresh)
-                        await cancelOrderLog(
-                            client,
-                            userId,
-                            accountId,
-                            "⏸️ Đơn **tạm dừng**: token account bị dead. Nhập lại token để tiếp tục.",
-                        );
-                        return user.send({
-                            embeds: [
-                                client.embed(
-                                    [
-                                        "Bot phát hiện token không còn hợp lệ.",
-                                        `Account bị gỡ: **${username}** (\`${accountId}\`)`,
-                                        reason ? `Chi tiết: ${reason}` : null,
-                                        "Vào panel Auto Quest và bấm nút **🔑 Cập nhật token** để gửi lại token — quest đã mua vẫn được giữ, không mất phí.",
-                                    ]
-                                        .filter(Boolean)
-                                        .join("\n"),
-                                    {
-                                        title: "Cần cập nhật token",
-                                        color: 0xfee75c,
-                                        timestamp: true,
-                                    },
-                                ),
-                            ],
-                        });
+                        await cancelOrderLog(client, userId, accountId, "token_dead");
+                        return dm("auto.quest.dm.tokenDead", { reason: reason || "" });
                     }
 
                     if (type === "quest_batch_started") {
@@ -219,24 +192,8 @@ module.exports = {
                                 quests.length,
                             );
                         }
-                        return user.send({
-                            embeds: [
-                                client.embed(
-                                    [
-                                        `Account: **${username}** (\`${accountId}\`)`,
-                                        `Số quest: ${quests.length}`,
-                                        ...quests.map(
-                                            (q) =>
-                                                `- ${q.name}${q.taskType ? ` [${q.taskType}]` : ""}`,
-                                        ),
-                                    ].join("\n"),
-                                    {
-                                        title: "Bắt đầu xử lý quest",
-                                        color: 0x5865f2,
-                                        timestamp: true,
-                                    },
-                                ),
-                            ],
+                        return dm("auto.quest.dm.batchStarted", {
+                            quests: quests.map((q) => ({ id: q.id ?? "", name: q.name, taskType: q.taskType || "", __text: q.name })),
                         });
                     }
 
@@ -267,45 +224,13 @@ module.exports = {
                         return;
                     }
 
-                    if (type === "account_started") {
-                        return user.send({
-                            embeds: [
-                                client.embed(
-                                    [
-                                        `Account: **${username}** (\`${accountId}\`)`,
-                                        "Dùng `/status` để theo dõi tiến trình.",
-                                    ].join("\n"),
-                                    {
-                                        title: "Bắt đầu chạy quest",
-                                        color: 0x57f287,
-                                        timestamp: true,
-                                    },
-                                ),
-                            ],
-                        });
-                    }
+                    if (type === "account_started") return dm("auto.quest.dm.accountStarted");
 
                     // ── Monthly subscription events ────────────────────────────
                     if (type === "monthly_activated") {
-                        const until = monthlyExpiresAt
-                            ? `<t:${Math.floor(new Date(monthlyExpiresAt).getTime() / 1000)}:f>`
-                            : "—";
-                        return user.send({
-                            embeds: [
-                                client.embed(
-                                    [
-                                        `Account: **${username}** (\`${accountId}\`)`,
-                                        `Số tháng: **${months}**`,
-                                        `Hạn tới: ${until}`,
-                                        "Bot sẽ tự chạy toàn bộ quest vào Thứ 3 & Thứ 7.",
-                                    ].join("\n"),
-                                    {
-                                        title: "Đã kích hoạt gói tháng",
-                                        color: 0x9b59b6,
-                                        timestamp: true,
-                                    },
-                                ),
-                            ],
+                        return dm("auto.quest.dm.monthlyActivated", {
+                            months,
+                            expiresAt: monthlyExpiresAt ? new Date(monthlyExpiresAt).getTime() : null,
                         });
                     }
 
@@ -320,24 +245,7 @@ module.exports = {
                         });
                     }
 
-                    if (type === "monthly_token_dead") {
-                        return user.send({
-                            embeds: [
-                                client.embed(
-                                    [
-                                        `Account: **${username}** (\`${accountId}\`)`,
-                                        "Token của account gói tháng đã hết hạn/không hợp lệ.",
-                                        "Bấm **Gia hạn theo tháng** trên panel và nhập lại token — gói của bạn vẫn còn hạn, không mất phí.",
-                                    ].join("\n"),
-                                    {
-                                        title: "Cần cập nhật token (gói tháng)",
-                                        color: 0xfee75c,
-                                        timestamp: true,
-                                    },
-                                ),
-                            ],
-                        });
-                    }
+                    if (type === "monthly_token_dead") return dm("auto.quest.dm.monthlyTokenDead");
                 } catch (e) {
                     console.warn(
                         `[ready] notify error for ${userId}: ${e.message}`,
@@ -387,33 +295,7 @@ module.exports = {
                           )
                         : false;
                     const pendingToken = unlockResult === "pending_token";
-                    const user = await client.users
-                        .fetch(userId)
-                        .catch(() => null);
-                    if (user)
-                        await user
-                            .send({
-                                embeds: [
-                                    client.embed(
-                                        [
-                                            `Mã đơn: \`${paymentId}\``,
-                                            `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
-                                            pendingToken
-                                                ? "⚠️ Token account đã die. **Nhập lại token** để chạy quest đã mua (đã lưu, không mất)."
-                                                : "Bot phát hiện thanh toán khi khởi động lại. Đã mở chạy quest đã chọn.",
-                                        ].join("\n"),
-                                        {
-                                            title: pendingToken
-                                                ? "Đã thanh toán — cần nhập lại token"
-                                                : "Đã xác nhận thanh toán (khôi phục)",
-                                            color: pendingToken
-                                                ? 0xfee75c
-                                                : 0x57f287,
-                                        },
-                                    ),
-                                ],
-                            })
-                            .catch(() => null);
+                    await questPaidDm(client, userId, paymentId, entry.amount, pendingToken, "recovered");
 
                     // ── AutoQuest monthly subscription ─────────────────────────
                 } else if (handler === "quest_monthly_payment") {
@@ -432,27 +314,7 @@ module.exports = {
                     } = require("../../../extensions/AutoBadge");
                     const paid = await markPaid(client, paymentId);
                     if (paid) {
-                        const user = await client.users
-                            .fetch(userId)
-                            .catch(() => null);
-                        if (user)
-                            await user
-                                .send({
-                                    embeds: [
-                                        client.embed(
-                                            [
-                                                `Mã đơn: \`${paymentId}\``,
-                                                `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
-                                                "Bot phát hiện thanh toán khi khởi động lại. Đang tiến hành xử lý badge...",
-                                            ].join("\n"),
-                                            {
-                                                title: "Đã xác nhận thanh toán (khôi phục)",
-                                                color: 0x57f287,
-                                            },
-                                        ),
-                                    ],
-                                })
-                                .catch(() => null);
+                        await dmUser(client, userId, "auto.badge.dm.recovered", { paymentId, amount: Number(entry.amount) });
                         await runOrder(client, entry.context);
                     }
 
@@ -464,27 +326,7 @@ module.exports = {
                     } = require("../../../extensions/AutoRobux");
                     const paid = await markRobuxPaymentPaid(client, paymentId);
                     if (paid) {
-                        const user = await client.users
-                            .fetch(userId)
-                            .catch(() => null);
-                        if (user)
-                            await user
-                                .send({
-                                    embeds: [
-                                        client.embed(
-                                            [
-                                                `Mã đơn: \`${paymentId}\``,
-                                                `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
-                                                "Bot phát hiện thanh toán khi khởi động lại. Admin sẽ xử lý đơn sớm nhất.",
-                                            ].join("\n"),
-                                            {
-                                                title: "Đã xác nhận thanh toán (khôi phục)",
-                                                color: 0x57f287,
-                                            },
-                                        ),
-                                    ],
-                                })
-                                .catch(() => null);
+                        await dmUser(client, userId, "auto.robux.dm.recovered", { paymentId, amount: Number(entry.amount) });
                         await handleRobuxPaid(client, entry.context);
                     }
 
@@ -518,48 +360,15 @@ module.exports = {
                 if (handler === "dg_payment") {
                     await require("../../../extensions/AutoDecoGift").removePayment(client, paymentId);
                 }
-                const user = await client.users.fetch(userId).catch(() => null);
-                if (!user) continue;
+                const vars = { paymentId, amount: Number(entry.amount) };
 
                 // ── AutoQuest ──────────────────────────────────────────────
                 if (handler === "quest_payment") {
-                    await user
-                        .send({
-                            embeds: [
-                                client.embed(
-                                    [
-                                        `Mã đơn: \`${paymentId}\``,
-                                        `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
-                                        "QR đã hết hạn. Hãy chọn lại quest để tạo QR mới.",
-                                    ].join("\n"),
-                                    {
-                                        title: "QR thanh toán đã hết hạn",
-                                        color: 0xfee75c,
-                                    },
-                                ),
-                            ],
-                        })
-                        .catch(() => null);
+                    await dmUser(client, userId, "auto.quest.dm.expired", { ...vars, via: "recovered" });
 
                     // ── AutoBadge ──────────────────────────────────────────────
                 } else if (handler === "badge_payment") {
-                    await user
-                        .send({
-                            embeds: [
-                                client.embed(
-                                    [
-                                        `Mã đơn: \`${paymentId}\``,
-                                        `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
-                                        "QR Auto Badge đã hết hạn. Hãy tạo đơn mới.",
-                                    ].join("\n"),
-                                    {
-                                        title: "QR thanh toán đã hết hạn",
-                                        color: 0xfee75c,
-                                    },
-                                ),
-                            ],
-                        })
-                        .catch(() => null);
+                    await dmUser(client, userId, "auto.badge.dm.expired", vars);
                     // Lật log đơn sang "hết hạn" ngay, thay vì đợi vòng quét định kỳ.
                     {
                         const {
@@ -572,29 +381,11 @@ module.exports = {
 
                     // ── AutoRobux ──────────────────────────────────────────────
                 } else if (handler === "rb_payment") {
-                    await user
-                        .send({
-                            embeds: [
-                                client.embed(
-                                    [
-                                        `Mã đơn: \`${paymentId}\``,
-                                        `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
-                                        "QR Robux đã hết hạn. Hãy tạo đơn mới.",
-                                    ].join("\n"),
-                                    {
-                                        title: "QR thanh toán đã hết hạn",
-                                        color: 0xfee75c,
-                                    },
-                                ),
-                            ],
-                        })
-                        .catch(() => null);
+                    await dmUser(client, userId, "auto.robux.dm.expired", vars);
 
                     // ── AutoDecoGift ───────────────────────────────────────────
                 } else if (handler === "dg_payment") {
-                    await user
-                        .send(client.ui.message("auto.dg.dm.expired", { paymentId, amount: Number(entry.amount) }))
-                        .catch(() => null);
+                    await dmUser(client, userId, "auto.dg.dm.expired", vars);
                 } else {
                     console.warn(
                         `[ready] Unknown expired handler: ${handler} (paymentId: ${paymentId})`,
@@ -610,27 +401,7 @@ module.exports = {
         // ── Expire stale pending payments ──────────────────────────────────────
         const stale = await expireStalePayments(client);
         for (const p of stale) {
-            try {
-                const user = await client.users
-                    .fetch(p.userId)
-                    .catch(() => null);
-                if (user)
-                    await user.send({
-                        embeds: [
-                            client.embed(
-                                [
-                                    `Mã đơn: \`${p.id}\``,
-                                    `Số tiền: ${Number(p.amount).toLocaleString("vi-VN")}đ`,
-                                    "Đơn đã quá 10 phút. Hãy chọn lại quest.",
-                                ].join("\n"),
-                                {
-                                    title: "QR thanh toán đã hết hạn",
-                                    color: 0xfee75c,
-                                },
-                            ),
-                        ],
-                    });
-            } catch (e) {}
+            await dmUser(client, p.userId, "auto.quest.dm.expired", { paymentId: p.id, amount: Number(p.amount), via: "stale" });
         }
 
         // ── Recover paid activations that weren't processed before shutdown ────

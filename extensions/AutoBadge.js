@@ -263,109 +263,53 @@ async function runOrder(client, context) {
         const payment = await attachOrder(client, paymentId, order.orderId);
 
         await badgeLog.updateOrderLog(client, payment, "paid");
-        await badgeLog.dm(
-            client,
-            userId,
-            client.embed("Bot sẽ nhắn lại ngay khi gửi xong.", {
-                title: "💸 Đã nhận thanh toán",
-                color: badgeLog.COLOR.paid,
-                fields: _dmFields(payment ?? context),
-                footer: { text: `Mã đơn: ${order.orderId}` },
-                timestamp: true,
-            }),
-        );
+        await badgeLog.dm(client, userId, "auto.badge.dm.paid", {
+            payment: badgeLog.paymentVars(payment ?? context, { orderId: order.orderId }),
+        });
         return order;
     } catch (err) {
         // Panel không với tới được: tiền đã thu mà chưa chạy được. Không im lặng —
         // báo khách và log để xử lý tay.
         const payment = await getPaymentById(client, paymentId);
         await badgeLog.updateOrderLog(client, payment, "failed", `Không khởi chạy được: ${err.message}`);
-        await badgeLog.dm(
-            client,
-            userId,
-            client.embed(
-                `Không khởi chạy được đơn: ${err.message}\n` +
-                    "Vui lòng liên hệ admin — đơn của bạn không bị mất.",
-                {
-                    title: "⚠️ Đã nhận thanh toán nhưng chưa chạy được",
-                    color: badgeLog.COLOR.bad,
-                    footer: { text: `Mã thanh toán: ${paymentId}` },
-                    timestamp: true,
-                },
-            ),
-        );
+        await badgeLog.dm(client, userId, "auto.badge.dm.startFailed", {
+            payment: badgeLog.paymentVars(payment ?? context, { id: paymentId }),
+            error: err.message,
+        });
         throw err;
     }
 }
 
 // ── Webhook từ panel ─────────────────────────────────────────────────────────────
 
-const { UNIT_VI, BADGE_VI, fmt } = badgeLog;
+const { UNIT_VI, fmt } = badgeLog;
 
-/** Các dòng mô tả đơn, dùng chung cho mọi DM để khách luôn thấy mình mua gì. */
-function _dmFields(p) {
-    const out = [{ name: "🎖️ Badge", value: BADGE_VI(p.badgeKey), inline: true }];
-    if (p.tierName) {
-        out.push({
-            name: p.threshold == null ? "🏠 Nhà" : "🎯 Mốc",
-            value:
-                p.threshold == null
-                    ? String(p.tierName)
-                    : `${p.tierName} — ${fmt(p.threshold)} ${UNIT_VI(p.unit)}`,
-            inline: true,
-        });
-    }
-    return out;
-}
-
-/** Sự kiện badge.event từ panel (kênh Discord) → hàm này. Dịch sự kiện thành DM cho khách. */
+/** Sự kiện badge.event từ panel (kênh Discord) → hàm này. Dịch sự kiện thành DM cho khách (templates auto.badge.dm.*). */
 async function handlePanelEvent(client, event) {
     const { orderId, ref, type } = event;
     const userId = ref;
     if (!userId) return;
     const payment = await getPaymentByOrderId(client, orderId);
-    const label = payment?.tierName ?? event.tierName ?? "";
-    const fields = _dmFields(payment ?? { badgeKey: event.badgeKey, tierName: event.tierName });
-
-    const send = (title, color, description, extra = []) =>
-        badgeLog.dm(
-            client,
-            userId,
-            client.embed(description, {
-                title,
-                color,
-                fields: [...fields, ...extra],
-                footer: { text: `Mã đơn: ${orderId}` },
-                timestamp: true,
-            }),
-        );
+    const base = badgeLog.paymentVars(
+        payment ?? { badgeKey: event.badgeKey, tierName: event.tierName, threshold: event.threshold, unit: event.unit },
+        { orderId },
+    );
+    const send = (key, extra = {}) => badgeLog.dm(client, userId, key, { payment: base, ...extra });
 
     switch (type) {
         // Gửi xong là xong đơn. Panel không đọc lại badge sau đó nữa nên
         // "sent" là sự kiện kết thúc duy nhất cho mọi loại badge.
         case "sent": {
-            const isHouse = event.badgeKey === "hypesquad";
-            await send(
-                "🎉 Đơn hoàn tất!",
-                badgeLog.COLOR.done,
-                isHouse
-                    ? "Nhà HypeSquad đã đổi, bạn kiểm tra trên profile là thấy ngay."
-                    : "Badge sẽ hiện trên profile sau khoảng **1 ngày** — đó là chu kỳ xử lý " +
-                          "của Discord, không phải đơn chưa xong.\n" +
-                          "_Badge này chỉ hiển thị với người xem có Nitro._",
-            );
+            await send("auto.badge.dm.sent", { payment: { ...base, badgeKey: event.badgeKey || base.badgeKey } });
             await badgeLog.updateOrderLog(client, payment, "sent");
             break;
         }
 
         case "forfeited":
-            await send(
-                "❌ Đơn bị huỷ — không hoàn tiền",
-                badgeLog.COLOR.bad,
-                `Tài khoản của bạn **đã đạt mốc ${label}** từ trước ` +
-                    `(${fmt(event.measuredValue)} ${UNIT_VI(event.unit)} ≥ ${fmt(event.threshold)}).\n` +
-                    "Theo điều khoản, số tiền đã chuyển không được hoàn lại.",
-            );
+            await send("auto.badge.dm.forfeited", {
+                measuredValue: event.measuredValue,
+                payment: { ...base, threshold: event.threshold ?? base.threshold, unitText: UNIT_VI(event.unit ?? payment?.unit) },
+            });
             await badgeLog.updateOrderLog(
                 client,
                 payment,
@@ -375,29 +319,17 @@ async function handlePanelEvent(client, event) {
             break;
 
         case "refund_due":
-            await send(
-                "↩️ Đơn đã huỷ",
-                badgeLog.COLOR.bad,
-                "Admin sẽ hoàn tiền cho bạn.",
-            );
+            await send("auto.badge.dm.refundDue");
             await badgeLog.updateOrderLog(client, payment, "refund_due");
             break;
 
         case "manual_review":
-            await send(
-                "⏳ Đơn đang chờ admin kiểm tra",
-                badgeLog.COLOR.warn,
-                "Tiền của bạn vẫn được giữ, không mất đi đâu.",
-            );
+            await send("auto.badge.dm.manualReview");
             await badgeLog.updateOrderLog(client, payment, "manual_review", event.error ?? null);
             break;
 
         case "failed":
-            await send(
-                "❌ Đơn thất bại",
-                badgeLog.COLOR.bad,
-                `${event.error ?? "Lỗi không xác định"}. Admin sẽ liên hệ với bạn.`,
-            );
+            await send("auto.badge.dm.failed", { error: event.error ?? "" });
             await badgeLog.updateOrderLog(client, payment, "failed", event.error ?? null);
             break;
 

@@ -683,6 +683,7 @@ function checkSelects(selects) {
         at(`Menu "${k}"`, v?.placeholder);
         at(`Menu "${k}" · nhãn`, v?.label);
         at(`Menu "${k}" · mô tả`, v?.description);
+        at(`Menu "${k}" · emoji`, v?.emoji);
         for (const [val, o] of Object.entries(v?.options || {})) {
             at(`Menu "${k}" · lựa chọn "${val}"`, o?.label);
             at(`Menu "${k}" · lựa chọn "${val}" · mô tả`, o?.description);

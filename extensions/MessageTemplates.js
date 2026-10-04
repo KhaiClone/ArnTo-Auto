@@ -351,7 +351,8 @@ class MessageTemplates {
                 const s = [...scope, extra];
                 const label = this._text(key, over?.selects?.[slot]?.label, def.selects?.[slot]?.label, s).slice(0, T.LIMITS.optionLabel);
                 const description = this._text(key, over?.selects?.[slot]?.description, def.selects?.[slot]?.description, s).slice(0, T.LIMITS.optionDescription);
-                return { label: label || "—", ...(description ? { description } : {}) };
+                const emoji = this._text(key, over?.selects?.[slot]?.emoji, def.selects?.[slot]?.emoji, s);
+                return { label: label || "—", ...(description ? { description } : {}), ...(emoji ? { emoji } : {}) };
             },
             pick,
         };

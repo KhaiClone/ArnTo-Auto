@@ -9,6 +9,10 @@ const MessageTemplates = require("./MessageTemplates");
 module.exports = (client) => {
     client.ui = new MessageTemplates(client, { guildId: client.configs.settings.guildIds[1] || client.configs.settings.guildIds[0] });
     client.ui.refreshable("auto.dg.panel", () => require("./AutoDecoGift").panelMessage(client));
+    client.ui.refreshable("auto.quest.panel", () => require("../functions/autoQuestHelpers").questPanelMessage(client));
+    client.ui.refreshable("auto.robux.panel", () => require("../commands/slash/robux/setup").panel(client));
+    client.ui.refreshable("auto.badge.panel", () => require("../commands/slash/badge/setup").panel(client));
+    client.ui.refreshable("auto.panelbot.panel", () => require("../commands/slash/panel/setup").panel(client));
 
     const bus = new PanelBus(client);
 

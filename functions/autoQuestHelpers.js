@@ -5,44 +5,30 @@
  * without circular dependency or duplication.
  */
 
-const {
-    ActionRowBuilder,
-    ButtonBuilder,
-    ButtonStyle,
-    MessageFlags,
-} = require("discord.js");
+const { MessageFlags } = require("discord.js");
+const pricing = require("./pricing");
 
-// Shared builder for the quest panel components. Two rows of buttons:
-//   Row 1: Quest lẻ, Quest tháng   (the two service types → open token modals)
-//   Row 2: Kiểm tra trạng thái, Cập nhật token
-// Used by /quest-setup. Buttons are stateless, so — unlike the old string select —
-// the same button can be pressed repeatedly without needing to reset the panel.
-function buildQuestPanelComponents() {
-    const topRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId("quest:enter_token")
-            .setLabel("Quest lẻ")
-            .setEmoji("⚡")
-            .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-            .setCustomId("quest:enter_token_monthly")
-            .setLabel("Quest tháng")
-            .setEmoji("♾️")
-            .setStyle(ButtonStyle.Primary),
+// Every message here is a template (templates/quest.js), editable on the
+// bot-panel's Embeds page.
+
+/**
+ * The Auto Quest panel /quest-setup posts (template auto.quest.panel): Quest lẻ,
+ * Quest tháng, Kiểm tra trạng thái, Cập nhật token. Buttons are stateless, so the
+ * same panel works forever — and the Embeds page can re-render it.
+ */
+async function questPanelMessage(client) {
+    return client.ui.message(
+        "auto.quest.panel",
+        { price: await pricing.questPricePerItem(client), monthlyPrice: await pricing.questMonthlyPrice(client) },
+        {
+            buttons: {
+                single: { customId: "quest:enter_token" },
+                monthly: { customId: "quest:enter_token_monthly" },
+                status: { customId: "quest:check_token" },
+                token: { customId: "quest:update_token" },
+            },
+        },
     );
-    const bottomRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId("quest:check_token")
-            .setLabel("Kiểm tra trạng thái")
-            .setEmoji("📊")
-            .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-            .setCustomId("quest:update_token")
-            .setLabel("Cập nhật token")
-            .setEmoji("🔑")
-            .setStyle(ButtonStyle.Secondary),
-    );
-    return [topRow, bottomRow];
 }
 const {
     getRunningMap,
@@ -76,13 +62,13 @@ async function _questNotifyChannel(client) {
     return channel?.isTextBased?.() ? channel : null;
 }
 
-/** Post the embed to the notify channel, or DM the buyer when there is none. */
-async function _deliverQuestNotice(client, userId, embed) {
+/** Post the notice to the notify channel, or DM the buyer when there is none. */
+async function _deliverQuestNotice(client, userId, payload) {
     try {
         const channel = await _questNotifyChannel(client);
         if (channel) {
             await channel.send({
-                embeds: [embed],
+                ...payload,
                 allowedMentions: { users: [userId] },
                 flags: MessageFlags.SuppressNotifications,
             });
@@ -90,10 +76,7 @@ async function _deliverQuestNotice(client, userId, embed) {
         }
         const user = await client.users.fetch(userId).catch(() => null);
         if (!user) return false;
-        await user.send({
-            embeds: [embed],
-            flags: MessageFlags.SuppressNotifications,
-        });
+        await user.send({ ...payload, flags: MessageFlags.SuppressNotifications });
         return true;
     } catch (e) {
         console.warn(
@@ -105,11 +88,10 @@ async function _deliverQuestNotice(client, userId, embed) {
 
 const planLabel = (plan) =>
     plan === "monthly" ? "♾️ Quest tháng" : "⚡ Quest lẻ";
-const accountLine = (username, accountId) =>
-    username ? `**${username}**` : `\`${accountId ?? "?"}\``;
+const accountVars = (accountId, username) => ({ accountId: accountId ?? null, username: username || "", __text: username || accountId || "" });
 
 /**
- * Notice for ONE finished quest.
+ * Notice for ONE finished quest (template auto.quest.done).
  * @param {Object} info - { userId, accountId?, username?, questName, taskType?, plan? }
  */
 async function sendQuestDoneNotice(
@@ -117,29 +99,18 @@ async function sendQuestDoneNotice(
     { userId, accountId, username, questName, taskType, plan },
 ) {
     if (!userId || !questName) return false;
-    const embed = client.embed(
-        `> 🎯 **${questName}**${taskType ? ` · \`${taskType}\`` : ""}`,
-        {
-            title: "✅ Hoàn thành 1 quest",
-            color: 0x57f287,
-            fields: [
-                { name: "👤 Khách hàng", value: `<@${userId}>`, inline: true },
-                {
-                    name: "🎮 Account",
-                    value: accountLine(username, accountId),
-                    inline: true,
-                },
-                { name: "📦 Gói", value: planLabel(plan), inline: true },
-            ],
-            footer: { text: `QUEST • ${accountId ?? "—"}` },
-            timestamp: true,
-        },
-    );
-    return _deliverQuestNotice(client, userId, embed);
+    const payload = client.ui.message("auto.quest.done", {
+        userId,
+        account: accountVars(accountId, username),
+        quest: { name: questName, taskType: taskType || "", __text: questName },
+        plan: plan || "single",
+        planText: planLabel(plan),
+    });
+    return _deliverQuestNotice(client, userId, payload);
 }
 
 /**
- * Notice for a finished ORDER (every selected quest is done).
+ * Notice for a finished ORDER — every selected quest is done (template auto.quest.orderDone).
  * @param {Object} info - { userId, accountId?, username?, completed?, plan? }
  */
 async function sendQuestOrderDoneNotice(
@@ -147,62 +118,47 @@ async function sendQuestOrderDoneNotice(
     { userId, accountId, username, completed, plan },
 ) {
     if (!userId) return false;
-    const countField = Number.isFinite(completed)
-        ? { name: "✅ Đã xong", value: `**${completed}** quest`, inline: true }
-        : { name: "📦 Gói", value: planLabel(plan), inline: true };
-    const embed = client.embed("> 🎉 Toàn bộ quest đã chọn đã chạy xong.", {
-        title: "🏁 Đã xong đơn quest",
-        color: 0x57f287,
-        fields: [
-            { name: "👤 Khách hàng", value: `<@${userId}>`, inline: true },
-            {
-                name: "🎮 Account",
-                value: accountLine(username, accountId),
-                inline: true,
-            },
-            countField,
-        ],
-        footer: { text: `QUEST • ${accountId ?? "—"}` },
-        timestamp: true,
+    const payload = client.ui.message("auto.quest.orderDone", {
+        userId,
+        account: accountVars(accountId, username),
+        completed: Number.isFinite(completed) ? completed : null,
+        hasCount: Number.isFinite(completed),
+        plan: plan || "single",
+        planText: planLabel(plan),
     });
-    return _deliverQuestNotice(client, userId, embed);
+    return _deliverQuestNotice(client, userId, payload);
 }
 
 // ── Order log ──────────────────────────────────────────────────────────────────
+// One message per order in the admin log channel, edited as it moves on
+// (templates auto.quest.log.*). The footer (creation time) is kept with the entry.
+
+async function _logChannel(client) {
+    const id = client.configs.settings.questOrderLogChannelId;
+    if (!id) return null;
+    const channel = await client.channels.fetch(id).catch(() => null);
+    return channel?.isTextBased?.() ? channel : null;
+}
+
+async function _logEntry(client, userId, accountId) {
+    return orderLogRegistry.get(`${userId}:${accountId}`) || (await getOrderLogPending(client, userId, accountId));
+}
 
 async function sendOrderLog(client, userId, accountId, username, quests) {
-    if (!client.configs.settings.questOrderLogChannelId) return;
     try {
-        const channel = await client.channels.fetch(
-            client.configs.settings.questOrderLogChannelId,
-        );
-        if (!channel?.isTextBased?.()) return;
-        const isStaffFree =
-            getRunningMap(userId).get(accountId)?.staffFree === true;
+        const channel = await _logChannel(client);
+        if (!channel) return;
+        const staffFree = getRunningMap(userId).get(accountId)?.staffFree === true;
         const footerText = `QUEST | Tạo lúc ${new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour12: false })}`;
-        const embed = client.embed("", {
-            title: "📦 Đơn hàng",
-            color: isStaffFree ? 0x9b59b6 : 0x5865f2,
-            fields: [
-                { name: "👤 Khách hàng", value: `<@${userId}>`, inline: true },
-                { name: "🎮 Account", value: username, inline: true },
-                {
-                    name: "📋 Số lượng",
-                    value: `**${quests.length}** quest`,
-                    inline: true,
-                },
-                {
-                    name: "📋 Trạng thái",
-                    value: isStaffFree
-                        ? "🆓 Miễn phí (Staff) — Đang chạy"
-                        : "⏳ Chờ thanh toán",
-                    inline: true,
-                },
-            ],
-            footer: { text: footerText },
-            timestamp: true,
-        });
-        const msg = await channel.send({ embeds: [embed] });
+        const msg = await channel.send(
+            client.ui.message("auto.quest.log.pending", {
+                userId,
+                account: accountVars(accountId, username),
+                count: quests.length,
+                staffFree,
+                footer: footerText,
+            }),
+        );
         const entry = { messageId: msg.id, footerText };
         orderLogRegistry.set(`${userId}:${accountId}`, entry);
         await setOrderLogPending(client, userId, accountId, entry);
@@ -211,119 +167,36 @@ async function sendOrderLog(client, userId, accountId, username, quests) {
     }
 }
 
-async function editOrderLog(
-    client,
-    userId,
-    accountId,
-    username,
-    completedNames,
-) {
-    if (!client.configs.settings.questOrderLogChannelId) return;
-    const key = `${userId}:${accountId}`;
-    const entry =
-        orderLogRegistry.get(key) ||
-        (await getOrderLogPending(client, userId, accountId));
+/** Edit the order's log message to template `key`; `done` forgets the entry afterwards. */
+async function _editLog(client, userId, accountId, key, vars, { done = false } = {}) {
+    const entry = await _logEntry(client, userId, accountId);
     if (!entry) return;
     try {
-        const channel = await client.channels.fetch(
-            client.configs.settings.questOrderLogChannelId,
-        );
-        if (!channel?.isTextBased?.()) return;
+        const channel = await _logChannel(client);
+        if (!channel) return;
         const msg = await channel.messages.fetch(entry.messageId);
-        const embed = client.embed("", {
-            title: "📦 Đơn hàng",
-            color: 0x57f287,
-            fields: [
-                { name: "👤 Khách hàng", value: `<@${userId}>`, inline: true },
-                { name: "🎮 Account", value: username, inline: true },
-                {
-                    name: "✅ Đã xử lý",
-                    value: `**${completedNames.length}** quest`,
-                    inline: true,
-                },
-            ],
-            footer: { text: entry.footerText },
-            timestamp: true,
-        });
-        await msg.edit({ embeds: [embed] });
-        orderLogRegistry.delete(key);
-        await setOrderLogPending(client, userId, accountId, null);
+        await msg.edit(client.ui.message(key, { userId, footer: entry.footerText, ...vars }, { edit: true }));
+        if (done) {
+            orderLogRegistry.delete(`${userId}:${accountId}`);
+            await setOrderLogPending(client, userId, accountId, null);
+        }
     } catch (e) {
-        console.warn(`[autoQuestHelpers] editOrderLog error: ${e.message}`);
+        console.warn(`[autoQuestHelpers] ${key} error: ${e.message}`);
     }
 }
 
-async function editOrderLogPaid(
-    client,
-    userId,
-    accountId,
-    username,
-    questCount,
-) {
-    if (!client.configs.settings.questOrderLogChannelId) return;
-    const key = `${userId}:${accountId}`;
-    const entry =
-        orderLogRegistry.get(key) ||
-        (await getOrderLogPending(client, userId, accountId));
-    if (!entry) return;
-    try {
-        const channel = await client.channels.fetch(
-            client.configs.settings.questOrderLogChannelId,
-        );
-        if (!channel?.isTextBased?.()) return;
-        const msg = await channel.messages.fetch(entry.messageId);
-        const embed = client.embed("", {
-            title: "📦 Đơn hàng",
-            color: 0xf39c12,
-            fields: [
-                { name: "👤 Khách hàng", value: `<@${userId}>`, inline: true },
-                { name: "🎮 Account", value: username, inline: true },
-                {
-                    name: "📋 Số lượng",
-                    value: `**${questCount}** quest`,
-                    inline: true,
-                },
-                {
-                    name: "📋 Trạng thái",
-                    value: "✅ Đã thanh toán — Đang chạy quest",
-                    inline: true,
-                },
-            ],
-            footer: { text: entry.footerText },
-            timestamp: true,
-        });
-        await msg.edit({ embeds: [embed] });
-        // Keep registry entry alive so editOrderLog (completion) can still find it
-    } catch (e) {
-        console.warn(`[autoQuestHelpers] editOrderLogPaid error: ${e.message}`);
-    }
+async function editOrderLog(client, userId, accountId, username, completedNames) {
+    await _editLog(client, userId, accountId, "auto.quest.log.done", { account: accountVars(accountId, username), count: completedNames.length }, { done: true });
 }
 
+async function editOrderLogPaid(client, userId, accountId, username, questCount) {
+    // The entry stays: editOrderLog (completion) still needs it.
+    await _editLog(client, userId, accountId, "auto.quest.log.paid", { account: accountVars(accountId, username), count: questCount });
+}
+
+/** @param {string} reason  cancelled | expired | token_dead | token_dead_panel (template auto.quest.log.cancelled) */
 async function cancelOrderLog(client, userId, accountId, reason) {
-    if (!client.configs.settings.questOrderLogChannelId) return;
-    const key = `${userId}:${accountId}`;
-    const entry =
-        orderLogRegistry.get(key) ||
-        (await getOrderLogPending(client, userId, accountId));
-    if (!entry) return;
-    try {
-        const channel = await client.channels.fetch(
-            client.configs.settings.questOrderLogChannelId,
-        );
-        if (!channel?.isTextBased?.()) return;
-        const msg = await channel.messages.fetch(entry.messageId);
-        const embed = client.embed(reason ?? "Đơn **bị hủy**.", {
-            title: "📦 Đơn hàng",
-            color: 0xed4245,
-            footer: { text: entry.footerText },
-            timestamp: true,
-        });
-        await msg.edit({ embeds: [embed] });
-        orderLogRegistry.delete(key);
-        await setOrderLogPending(client, userId, accountId, null);
-    } catch (e) {
-        console.warn(`[autoQuestHelpers] cancelOrderLog error: ${e.message}`);
-    }
+    await _editLog(client, userId, accountId, "auto.quest.log.cancelled", { account: accountVars(accountId, ""), reason: reason || "" }, { done: true });
 }
 
 // ── Payment unlock ─────────────────────────────────────────────────────────────
@@ -463,133 +336,52 @@ async function unlockPaymentIfPaid(client, payment) {
     return "pending_token";
 }
 
-// ── Payment embed ──────────────────────────────────────────────────────────────
+// ── Payment messages ───────────────────────────────────────────────────────────
 
-function buildPaymentEmbed(client, payment, note) {
-    const s = client.configs.settings;
-    return {
-        title: "Thanh toán quest",
-        color: payment.status === "paid" ? 0x57f287 : 0x5865f2,
-        description: note || null,
-        fields: [
-            { name: "Mã đơn", value: `\`${payment.id}\``, inline: false },
-            {
-                name: "Số lượng quest",
-                value: String((payment.selectedQuestIds ?? []).length),
-                inline: true,
+/**
+ * The QR of a single-quest order (template auto.quest.payment). `state` =
+ * created | existed. A pending payment carries its Hủy đơn button.
+ */
+function questPaymentMessage(client, payment, state = "created", opts = {}) {
+    const count = (payment.selectedQuestIds ?? []).length;
+    return client.ui.message(
+        "auto.quest.payment",
+        {
+            state,
+            account: accountVars(payment.accountId, opts.username),
+            payment: {
+                id: payment.id,
+                count,
+                unitPrice: count ? Math.round(Number(payment.amount) / count) : client.configs.settings.questPricePerItem,
+                amount: Number(payment.amount),
+                transferCode: payment.transferCode,
+                qrUrl: payment.qrUrl || null,
+                status: payment.status,
+                __text: payment.id,
             },
-            {
-                name: "Đơn giá",
-                value: `${s.questPricePerItem.toLocaleString("vi-VN")}đ/quest`,
-                inline: true,
-            },
-            {
-                name: "Tổng tiền",
-                value: `\`${Number(payment.amount).toLocaleString("vi-VN")} VNĐ\``,
-                inline: true,
-            },
-            {
-                name: "Chủ tài khoản",
-                value: `\`${s.bankHolder}\``,
-                inline: false,
-            },
-            { name: "Ngân hàng", value: `\`${s.bankCode}\``, inline: true },
-            {
-                name: "Số tài khoản",
-                value: `\`\`\`\n${s.bankAccount}\n\`\`\``,
-                inline: false,
-            },
-            {
-                name: "Nội dung chuyển khoản",
-                value: `\`\`\`\n${payment.transferCode}\n\`\`\``,
-                inline: false,
-            },
-        ],
-        image:
-            payment.status === "pending" && payment.qrUrl
-                ? { url: payment.qrUrl }
-                : null,
-        footer: {
-            text:
-                payment.status === "pending"
-                    ? "Chuyển đúng nội dung để tự động xác nhận giao dịch."
-                    : payment.status === "paid"
-                      ? "Đã xác nhận thanh toán. Bot bắt đầu chạy quest đã chọn."
-                      : "Đơn đã hủy hoặc hết hạn.",
         },
-        timestamp: new Date().toISOString(),
-    };
-}
-
-function buildPaymentActionRow(paymentId) {
-    return new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId(`quest:cancel_payment:${paymentId}`)
-            .setLabel("Hủy đơn")
-            .setStyle(ButtonStyle.Danger),
+        { buttons: payment.status === "pending" ? { cancel: { customId: `quest:cancel_payment:${payment.id}` } } : {}, ...opts },
     );
 }
 
-// ── Monthly subscription payment UI ──────────────────────────────────────────────
-
-function buildMonthlyPaymentEmbed(client, payment, note) {
-    const s = client.configs.settings;
-    return {
-        title: "Gia hạn Auto Quest theo tháng",
-        color: 0x9b59b6,
-        description: note || null,
-        fields: [
-            {
-                name: "Mã đơn",
-                value: `\`${payment.paymentId}\``,
-                inline: false,
+/** The QR of a monthly plan (template auto.quest.monthly.payment). */
+function monthlyPaymentMessage(client, payment, state = "created", { username, accountId } = {}) {
+    return client.ui.message(
+        "auto.quest.monthly.payment",
+        {
+            state,
+            account: accountVars(accountId ?? payment.accountId, username ?? payment.username),
+            payment: {
+                paymentId: payment.paymentId,
+                months: payment.months,
+                unitPrice: payment.months ? Math.round(Number(payment.amount) / payment.months) : client.configs.settings.monthlyQuestPrice,
+                amount: Number(payment.amount),
+                transferCode: payment.transferCode,
+                qrUrl: payment.qrUrl || null,
+                __text: payment.paymentId,
             },
-            {
-                name: "Số tháng",
-                value: `**${payment.months}** tháng`,
-                inline: true,
-            },
-            {
-                name: "Đơn giá",
-                value: `${s.monthlyQuestPrice.toLocaleString("vi-VN")}đ/tháng`,
-                inline: true,
-            },
-            {
-                name: "Tổng tiền",
-                value: `\`${Number(payment.amount).toLocaleString("vi-VN")} VNĐ\``,
-                inline: true,
-            },
-            {
-                name: "Chủ tài khoản",
-                value: `\`${s.bankHolder}\``,
-                inline: false,
-            },
-            { name: "Ngân hàng", value: `\`${s.bankCode}\``, inline: true },
-            {
-                name: "Số tài khoản",
-                value: `\`\`\`\n${s.bankAccount}\n\`\`\``,
-                inline: false,
-            },
-            {
-                name: "Nội dung chuyển khoản",
-                value: `\`\`\`\n${payment.transferCode}\n\`\`\``,
-                inline: false,
-            },
-        ],
-        image: payment.qrUrl ? { url: payment.qrUrl } : null,
-        footer: {
-            text: "Chuyển đúng nội dung để tự động kích hoạt gói. Bot chạy toàn bộ quest vào Thứ 3 & Thứ 7.",
         },
-        timestamp: new Date().toISOString(),
-    };
-}
-
-function buildMonthlyCancelRow(paymentId) {
-    return new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId(`quest:cancel_monthly:${paymentId}`)
-            .setLabel("Hủy đơn")
-            .setStyle(ButtonStyle.Danger),
+        { buttons: { cancel: { customId: `quest:cancel_monthly:${payment.paymentId}` } } },
     );
 }
 
@@ -601,9 +393,9 @@ module.exports = {
     editOrderLogPaid,
     cancelOrderLog,
     unlockPaymentIfPaid,
-    buildPaymentEmbed,
-    buildPaymentActionRow,
-    buildMonthlyPaymentEmbed,
-    buildMonthlyCancelRow,
-    buildQuestPanelComponents,
+    questPaymentMessage,
+    monthlyPaymentMessage,
+    questPanelMessage,
+    accountVars,
+    planLabel,
 };

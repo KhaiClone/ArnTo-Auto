@@ -25,19 +25,17 @@ module.exports = async function handleQuestEvent(client, body) {
     } else if (type === "status" && status === "done") {
         await sendQuestOrderDoneNotice(client, { userId, accountId, username, plan });
     } else if (type === "status" && status === "token_dead") {
-        await cancelOrderLog(client, userId, accountId, "⏸️ Token account bị dead. Nhập lại token để tiếp tục.").catch(() => null);
+        await cancelOrderLog(client, userId, accountId, "token_dead_panel").catch(() => null);
         // Still a DM: this one asks the buyer to do something.
         const user = await client.users.fetch(userId).catch(() => null);
         if (user)
             await user
-                .send({
-                    embeds: [
-                        client.embed("Token account đã dead. Vào panel nhập token để tiếp tục chạy quest đã mua.", {
-                            title: "Cần nhập lại token",
-                            color: 0xfee75c,
-                        }),
-                    ],
-                })
+                .send(
+                    client.ui.message("auto.quest.dm.tokenDeadPanel", {
+                        account: { accountId: accountId ?? null, username: username || "", __text: username || accountId || "" },
+                        user: client.ui.user(user),
+                    }),
+                )
                 .catch(() => null);
     } else if (type === "status" && status === "error" && error) {
         console.warn(`[quest-event] ${userId} error: ${error}`);

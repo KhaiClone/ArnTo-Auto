@@ -1,5 +1,6 @@
 const { SlashCommandBuilder } = require("discord.js");
 const {
+    getRunningMap,
     stopAllAccounts,
     startAccount,
     loadAccounts,
@@ -15,7 +16,14 @@ module.exports = {
         await client.funcs.wait(1);
         const data = await loadAccounts(client);
         const accounts = Object.entries(data[interaction.user.id] ?? {});
-        if (!accounts.length) return interaction.editReply(client.ui.message("auto.quest.cmd.restartNone"));
+        if (!accounts.length)
+            return interaction.editReply({
+                embeds: [
+                    client.embed("Bạn chưa có account nào để restart.", {
+                        color: 0xfee75c,
+                    }),
+                ],
+            });
         const results = [];
         let ok = 0;
         for (const [, record] of accounts) {
@@ -34,9 +42,17 @@ module.exports = {
             );
             if (result.ok) {
                 ok++;
-                results.push({ ok: true, username: result.username, reason: "" });
-            } else results.push({ ok: false, username: record.username, reason: result.reason });
+                results.push(`✅ ${result.username}`);
+            } else results.push(`❌ ${record.username}: ${result.reason}`);
         }
-        return interaction.editReply(client.ui.message("auto.quest.cmd.restarted", { results, ok, total: accounts.length }));
+        return interaction.editReply({
+            embeds: [
+                client.embed(results.join("\n"), {
+                    title: `Restart xong — ${ok}/${accounts.length}`,
+                    color: ok > 0 ? 0x57f287 : 0xed4245,
+                    timestamp: true,
+                }),
+            ],
+        });
     },
 };

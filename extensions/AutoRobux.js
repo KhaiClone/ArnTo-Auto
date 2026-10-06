@@ -4,9 +4,9 @@
  *  - Payment DB (create, mark paid, cancel)
  *  - AutoBank integration
  *  - Order log (send / edit)
- * Every message is a template (templates/robux.js), editable on the bot-panel.
  */
 
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 const { nanoid } = require("nanoid");
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -29,29 +29,6 @@ const RB_REFUND_DB = "robux_refunds"; // refund codes for failed orders
 const RB_QUEUE_MSG_DB = "robux_queue_msg"; // persisted { channelId, messageId } for the live queue embed
 // In-memory queue message: { channelId, messageId } for the live queue embed
 let _queueMessageRef = null;
-
-// ── Template variables ─────────────────────────────────────────────────────────
-
-/** A payment / queue entry / refund record as templates see it (type robuxOrder). */
-function orderVars(o = {}) {
-    const links = Array.isArray(o.gamepassLinks) ? o.gamepassLinks : [];
-    return {
-        paymentId: o.paymentId ?? o.id ?? "",
-        userId: o.userId ?? null,
-        robux: o.robux ?? 0,
-        robuxText: Number(o.robux ?? 0).toLocaleString(),
-        price: o.price ?? 0,
-        accountName: o.accountName ?? "",
-        gamepassLinks: links.join("\n"),
-        linkCount: links.length,
-        transferCode: o.transferCode ?? "",
-        qrUrl: o.qrUrl ?? null,
-        status: o.status ?? "",
-        __text: o.paymentId ?? o.id ?? "",
-    };
-}
-
-const packageVars = (p) => ({ robux: p.robux, robuxText: p.robux.toLocaleString(), price: p.price });
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
 
@@ -294,7 +271,24 @@ async function _onPaymentPaid(client, context) {
     const user = await client.users.fetch(userId).catch(() => null);
     if (user) {
         await user
-            .send(client.ui.message("auto.robux.dm.paid", { order: orderVars({ ...context, paymentId }), user: client.ui.user(user) }))
+            .send({
+                embeds: [
+                    client.embed(
+                        [
+                            `Mã đơn: \`${paymentId}\``,
+                            `Số Robux: **${robux.toLocaleString()} Robux**`,
+                            `Tên tài khoản: ${accountName}`,
+                            `Link Gamepass:`,
+                            `${gamepassLinks.join("\n")}`,
+                            "✅ Đã xác nhận thanh toán! Admin sẽ xử lý đơn của bạn sớm nhất.",
+                        ].join("\n"),
+                        {
+                            title: "Đã xác nhận thanh toán Robux",
+                            color: 0x57f287,
+                        },
+                    ),
+                ],
+            })
             .catch(() => null);
     }
 }
@@ -302,30 +296,6 @@ async function _onPaymentPaid(client, context) {
 // Exported for use by missed handler in ready.js
 async function handleRobuxPaid(client, context) {
     await _onPaymentPaid(client, context);
-}
-
-// ── Order log ──────────────────────────────────────────────────────────────────
-
-async function _logChannel(client) {
-    const id = client.configs.settings.robuxOrderLogChannelId;
-    if (!id) return null;
-    const channel = await client.channels.fetch(id).catch(() => null);
-    return channel?.isTextBased?.() ? channel : null;
-}
-
-/** Edit the order's log message to template `key` (the entry is kept unless `forget`). */
-async function _editLog(client, paymentId, key, order, { forget = false } = {}) {
-    const entry = _orderLogRegistry.get(paymentId);
-    if (!entry) return;
-    try {
-        const channel = await _logChannel(client);
-        if (!channel) return;
-        const msg = await channel.messages.fetch(entry.messageId);
-        await msg.edit(client.ui.message(key, { order: orderVars({ ...order, paymentId }), footer: entry.footerText }, { edit: true }));
-        if (forget) _orderLogRegistry.delete(paymentId);
-    } catch (e) {
-        console.warn(`[AutoRobux] ${key} error: ${e.message}`);
-    }
 }
 
 // ── Admin order actions ───────────────────────────────────────────────────────
@@ -339,7 +309,45 @@ async function completeOrder(client, paymentId) {
         return { ok: false, reason: "Không tìm thấy đơn trong hàng chờ." };
 
     // Edit order log to ✅ done
-    await _editLog(client, paymentId, "auto.robux.log.done", entry, { forget: true });
+    const logEntry = _orderLogRegistry.get(paymentId);
+    if (logEntry && client.configs.settings.robuxOrderLogChannelId) {
+        try {
+            const ch = await client.channels.fetch(
+                client.configs.settings.robuxOrderLogChannelId,
+            );
+            const msg = await ch.messages.fetch(logEntry.messageId);
+            const embed = client.embed("", {
+                title: "🎮 Đơn Robux",
+                color: 0x57f287,
+                fields: [
+                    {
+                        name: "<:robux:1456493708382830735> Số Robux",
+                        value: `**${entry.robux.toLocaleString()} Robux**`,
+                        inline: true,
+                    },
+                    {
+                        name: "👤 Tài khoản",
+                        value: entry.accountName,
+                        inline: true,
+                    },
+                    {
+                        name: "🔗 Link Gamepass",
+                        value: entry.gamepassLinks.join("\n"),
+                        inline: false,
+                    },
+                    {
+                        name: "📋 Trạng thái",
+                        value: "✅ Đã hoàn thành",
+                        inline: true,
+                    },
+                ],
+                footer: { text: logEntry.footerText },
+                timestamp: true,
+            });
+            await msg.edit({ embeds: [embed] });
+            _orderLogRegistry.delete(paymentId);
+        } catch {}
+    }
 
     // Update queue
     await updateQueueMessage(client);
@@ -348,7 +356,18 @@ async function completeOrder(client, paymentId) {
     const user = await client.users.fetch(entry.userId).catch(() => null);
     if (user) {
         await user
-            .send(client.ui.message("auto.robux.dm.done", { order: orderVars(entry), user: client.ui.user(user) }))
+            .send({
+                embeds: [
+                    client.embed(
+                        [
+                            `Mã đơn: \`${paymentId}\``,
+                            `<:robux:1456493708382830735> **${entry.robux.toLocaleString()} Robux** đã được nạp vào tài khoản **${entry.accountName}**.`,
+                            "✅ Đơn hàng của bạn đã hoàn thành!",
+                        ].join("\n"),
+                        { title: "Đơn Robux hoàn thành", color: 0x57f287 },
+                    ),
+                ],
+            })
             .catch(() => null);
     }
 
@@ -394,7 +413,45 @@ async function failOrder(client, paymentId, refundAmount) {
     await _saveRefunds(client, refunds);
 
     // Edit order log to ❌ failed
-    await _editLog(client, paymentId, "auto.robux.log.failed", entry, { forget: true });
+    const logEntry = _orderLogRegistry.get(paymentId);
+    if (logEntry && client.configs.settings.robuxOrderLogChannelId) {
+        try {
+            const ch = await client.channels.fetch(
+                client.configs.settings.robuxOrderLogChannelId,
+            );
+            const msg = await ch.messages.fetch(logEntry.messageId);
+            const embed = client.embed("", {
+                title: "🎮 Đơn Robux",
+                color: 0xed4245,
+                fields: [
+                    {
+                        name: "📦 Mã đơn (Queue)",
+                        value: `\`${paymentId}\``,
+                        inline: false,
+                    },
+                    {
+                        name: "<:robux:1456493708382830735> Số Robux",
+                        value: `**${entry.robux.toLocaleString()} Robux**`,
+                        inline: true,
+                    },
+                    {
+                        name: "👤 Tài khoản",
+                        value: entry.accountName,
+                        inline: true,
+                    },
+                    {
+                        name: "📋 Trạng thái",
+                        value: "❌ Thất bại — Đã cấp mã hoàn tiền",
+                        inline: true,
+                    },
+                ],
+                footer: { text: logEntry.footerText },
+                timestamp: true,
+            });
+            await msg.edit({ embeds: [embed] });
+            _orderLogRegistry.delete(paymentId);
+        } catch {}
+    }
 
     // Update queue
     await updateQueueMessage(client);
@@ -403,13 +460,25 @@ async function failOrder(client, paymentId, refundAmount) {
     const user = await client.users.fetch(entry.userId).catch(() => null);
     if (user) {
         await user
-            .send(
-                client.ui.message("auto.robux.dm.failed", {
-                    order: orderVars(entry),
-                    refund: { code: refundCode, amount: resolvedRefundAmount },
-                    user: client.ui.user(user),
-                }),
-            )
+            .send({
+                embeds: [
+                    client.embed(
+                        [
+                            `Mã đơn: \`${paymentId}\``,
+                            `❌ Rất tiếc, đơn **${entry.robux.toLocaleString()} Robux** của bạn không thể xử lý.`,
+                            "",
+                            "**Mã hoàn tiền của bạn:**",
+                            `\`\`\`${refundCode}\`\`\``,
+                            "Hãy tạo ticket và gửi mã này để được hoàn tiền.",
+                            "Mã chỉ dùng được một lần.",
+                        ].join("\n"),
+                        {
+                            title: "Đơn Robux thất bại — Mã hoàn tiền",
+                            color: 0xed4245,
+                        },
+                    ),
+                ],
+            })
             .catch(() => null);
     }
 
@@ -447,7 +516,7 @@ async function markRefundUsed(client, code) {
 // ── Queue message ──────────────────────────────────────────────────────────────
 
 /**
- * Update the live queue message in ROBUX_QUEUE_CHANNEL_ID (template auto.robux.queue).
+ * Update the live queue message in ROBUX_QUEUE_CHANNEL_ID.
  * Creates it if it doesn't exist yet, edits it if it does.
  */
 async function updateQueueMessage(client) {
@@ -459,18 +528,7 @@ async function updateQueueMessage(client) {
         if (!channel?.isTextBased?.()) return;
 
         const queue = await _readQueue(client);
-        const view = client.ui.message(
-            "auto.robux.queue",
-            {
-                queue: queue.map((item, i) => ({
-                    number: i + 1,
-                    paymentId: item.paymentId,
-                    robuxText: Number(item.robux).toLocaleString(),
-                    userId: item.userId,
-                })),
-            },
-            { edit: true },
-        );
+        const embed = _buildQueueEmbed(client, queue);
 
         // Restore from DB if in-memory ref was lost (e.g. after restart)
         if (!_queueMessageRef) {
@@ -483,7 +541,7 @@ async function updateQueueMessage(client) {
                 const msg = await channel.messages.fetch(
                     _queueMessageRef.messageId,
                 );
-                await msg.edit(view);
+                await msg.edit({ embeds: [embed] });
                 return;
             } catch {
                 // Message was deleted — clear both in-memory and DB refs
@@ -493,7 +551,7 @@ async function updateQueueMessage(client) {
         }
 
         // Send new queue message, pin it, and persist the ref
-        const msg = await channel.send(view);
+        const msg = await channel.send({ embeds: [embed] });
         _queueMessageRef = { channelId: channel.id, messageId: msg.id };
         await client.db.set(RB_QUEUE_MSG_DB, _queueMessageRef);
         await msg.pin().catch(() => null);
@@ -502,7 +560,35 @@ async function updateQueueMessage(client) {
     }
 }
 
-// ── Order log messages ─────────────────────────────────────────────────────────
+function _buildQueueEmbed(client, queue) {
+    const lines =
+        queue.length === 0
+            ? ["*Không có đơn nào đang chờ xử lý.*"]
+            : queue.map(
+                  (item, i) =>
+                      `**#${i + 1}** | \`${item.paymentId}\` | <:robux:1456493708382830735> ${item.robux.toLocaleString()} Robux | <@${item.userId}>`,
+              );
+
+    return {
+        title: "🎮 Hàng chờ Robux",
+        color: 0xe74c3c,
+        description: lines.join("\n"),
+        fields:
+            queue.length > 0
+                ? [
+                      {
+                          name: "Tổng đơn chờ",
+                          value: `**${queue.length}**`,
+                          inline: true,
+                      },
+                  ]
+                : [],
+        footer: { text: "Cập nhật lúc" },
+        timestamp: new Date().toISOString(),
+    };
+}
+
+// ── Order log ──────────────────────────────────────────────────────────────────
 
 async function sendRobuxOrderLog(
     client,
@@ -513,16 +599,55 @@ async function sendRobuxOrderLog(
     accountName,
     gamepassLinks,
 ) {
+    if (!client.configs.settings.robuxOrderLogChannelId) return;
     try {
-        const channel = await _logChannel(client);
-        if (!channel) return;
-        const footerText = `ROBUX | Tạo lúc ${new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour12: false })}`;
-        const msg = await channel.send(
-            client.ui.message("auto.robux.log.pending", {
-                order: orderVars({ paymentId, userId, robux, price, accountName, gamepassLinks }),
-                footer: footerText,
-            }),
+        const channel = await client.channels.fetch(
+            client.configs.settings.robuxOrderLogChannelId,
         );
+        if (!channel?.isTextBased?.()) return;
+
+        const footerText = `ROBUX | Tạo lúc ${new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour12: false })}`;
+        const embed = client.embed("", {
+            title: "🎮 Đơn Robux",
+            color: 0xe74c3c,
+            fields: [
+                {
+                    name: "📦 Mã đơn (Queue)",
+                    value: `\`${paymentId}\``,
+                    inline: false,
+                },
+                { name: "👤 Khách hàng", value: `<@${userId}>`, inline: true },
+                {
+                    name: "<:robux:1456493708382830735> Số Robux",
+                    value: `**${robux.toLocaleString()} Robux**`,
+                    inline: true,
+                },
+                {
+                    name: "💰 Số tiền",
+                    value: `**${price.toLocaleString("vi-VN")}đ**`,
+                    inline: true,
+                },
+                {
+                    name: "👤 Tên tài khoản",
+                    value: accountName,
+                    inline: true,
+                },
+                {
+                    name: "🔗 Link Gamepass",
+                    value: gamepassLinks.join("\n"),
+                    inline: false,
+                },
+                {
+                    name: "📋 Trạng thái",
+                    value: "⏳ Chờ thanh toán",
+                    inline: true,
+                },
+            ],
+            footer: { text: footerText },
+            timestamp: true,
+        });
+
+        const msg = await channel.send({ embeds: [embed] });
         _orderLogRegistry.set(paymentId, { messageId: msg.id, footerText });
     } catch (e) {
         console.warn(`[AutoRobux] sendRobuxOrderLog error: ${e.message}`);
@@ -536,33 +661,160 @@ async function editRobuxOrderLog(
     accountName,
     gamepassLinks,
 ) {
-    // Do NOT forget the registry entry here — completeOrder / failOrder
-    // still need it to perform their final edits on this message.
-    await _editLog(client, paymentId, "auto.robux.log.paid", { robux, accountName, gamepassLinks });
+    if (!client.configs.settings.robuxOrderLogChannelId) return;
+    const entry = _orderLogRegistry.get(paymentId);
+    if (!entry) return;
+    try {
+        const channel = await client.channels.fetch(
+            client.configs.settings.robuxOrderLogChannelId,
+        );
+        if (!channel?.isTextBased?.()) return;
+        const msg = await channel.messages.fetch(entry.messageId);
+        const embed = client.embed("", {
+            title: "🎮 Đơn Robux",
+            color: 0xf39c12,
+            fields: [
+                {
+                    name: "📦 Mã đơn (Queue)",
+                    value: `\`${paymentId}\``,
+                    inline: false,
+                },
+                {
+                    name: "<:robux:1456493708382830735> Số Robux",
+                    value: `**${robux.toLocaleString()} Robux**`,
+                    inline: true,
+                },
+                {
+                    name: "👤 Tên tài khoản",
+                    value: accountName,
+                    inline: true,
+                },
+                {
+                    name: "🔗 Link Gamepass",
+                    value: gamepassLinks.join("\n"),
+                    inline: false,
+                },
+                {
+                    name: "📋 Trạng thái",
+                    value: "✅ Đã thanh toán — Chờ admin xử lý",
+                    inline: true,
+                },
+            ],
+            footer: { text: entry.footerText },
+            timestamp: true,
+        });
+        await msg.edit({ embeds: [embed] });
+        // Do NOT delete the registry entry here — completeOrder / failOrder
+        // still need it to perform their final edits on this message.
+    } catch (e) {
+        console.warn(`[AutoRobux] editRobuxOrderLog error: ${e.message}`);
+    }
 }
 
 async function cancelRobuxOrderLog(client, paymentId) {
-    await _editLog(client, paymentId, "auto.robux.log.cancelled", {}, { forget: true });
+    if (!client.configs.settings.robuxOrderLogChannelId) return;
+    const entry = _orderLogRegistry.get(paymentId);
+    if (!entry) return;
+    try {
+        const channel = await client.channels.fetch(
+            client.configs.settings.robuxOrderLogChannelId,
+        );
+        if (!channel?.isTextBased?.()) return;
+        const msg = await channel.messages.fetch(entry.messageId);
+        const embed = client.embed("", {
+            title: "🎮 Đơn Robux",
+            color: 0x95a5a6,
+            fields: [
+                {
+                    name: "📦 Mã đơn (Queue)",
+                    value: `\`${paymentId}\``,
+                    inline: false,
+                },
+                {
+                    name: "📋 Trạng thái",
+                    value: "🚫 Đã hủy bởi khách / Hết hạn",
+                    inline: true,
+                },
+            ],
+            footer: { text: entry.footerText },
+            timestamp: true,
+        });
+        await msg.edit({ embeds: [embed] });
+        _orderLogRegistry.delete(paymentId);
+    } catch (e) {
+        console.warn(`[AutoRobux] cancelRobuxOrderLog error: ${e.message}`);
+    }
 }
 
 // ── UI helpers ─────────────────────────────────────────────────────────────────
 
-/**
- * The QR message (template auto.robux.payment). `state` = created | existed.
- * A pending payment carries its Hủy đơn button.
- */
-function robuxPaymentMessage(client, payment, state = "created", opts = {}) {
-    return client.ui.message(
-        "auto.robux.payment",
-        { order: orderVars(payment), state },
-        { buttons: payment.status === "pending" ? { cancel: { customId: `rb:cancel_payment:${payment.id}` } } : {}, ...opts },
+function buildRobuxPaymentEmbed(client, payment, note) {
+    const s = client.configs.settings;
+    return {
+        title: "Thanh toán Robux",
+        color: 0xe74c3c,
+        description: note || null,
+        fields: [
+            { name: "Mã đơn", value: `\`${payment.id}\``, inline: false },
+            {
+                name: "Số Robux",
+                value: `**${payment.robux.toLocaleString()} Robux**`,
+                inline: true,
+            },
+            {
+                name: "Tổng tiền",
+                value: `\`${Number(payment.price).toLocaleString("vi-VN")} VNĐ\``,
+                inline: true,
+            },
+            {
+                name: "Tên tài khoản Roblox",
+                value: payment.accountName,
+                inline: true,
+            },
+            {
+                name: "Link Gamepass",
+                value: payment.gamepassLinks.join("\n"),
+                inline: false,
+            },
+            {
+                name: "Chủ tài khoản",
+                value: `\`${s.bankHolder}\``,
+                inline: false,
+            },
+            { name: "Ngân hàng", value: `\`${s.bankCode}\``, inline: true },
+            {
+                name: "Số tài khoản",
+                value: `\`\`\`\n${s.bankAccount}\n\`\`\``,
+                inline: false,
+            },
+            {
+                name: "Nội dung chuyển khoản",
+                value: `\`\`\`\n${payment.transferCode}\n\`\`\``,
+                inline: false,
+            },
+        ],
+        image:
+            payment.status === "pending" && payment.qrUrl
+                ? { url: payment.qrUrl }
+                : null,
+        footer: {
+            text: "Bot tự kiểm tra qua VietQR webhook. Chuyển đúng nội dung.",
+        },
+        timestamp: new Date().toISOString(),
+    };
+}
+
+function buildRobuxCancelRow(paymentId) {
+    return new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`rb:cancel_payment:${paymentId}`)
+            .setLabel("Hủy đơn")
+            .setStyle(ButtonStyle.Danger),
     );
 }
 
 module.exports = {
     ROBUX_PACKAGES,
-    orderVars,
-    packageVars,
     getQueue,
     completeOrder,
     failOrder,
@@ -579,5 +831,6 @@ module.exports = {
     sendRobuxOrderLog,
     editRobuxOrderLog,
     cancelRobuxOrderLog,
-    robuxPaymentMessage,
+    buildRobuxPaymentEmbed,
+    buildRobuxCancelRow,
 };

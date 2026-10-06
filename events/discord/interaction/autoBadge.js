@@ -1,7 +1,6 @@
 /**
  * autoBadge.js (interactionCreate event)
- * Handler mỏng — logic nằm ở extensions/AutoBadge.js và bên panel; mọi chữ ở
- * templates/badge.js (auto.badge.flow, auto.badge.payment).
+ * Handler mỏng — logic nằm ở extensions/AutoBadge.js và bên panel.
  * Mọi customId có tiền tố "bg:".
  *
  * LUỒNG
@@ -23,6 +22,9 @@ const {
     TextInputBuilder,
     TextInputStyle,
     StringSelectMenuBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    EmbedBuilder,
     MessageFlags,
 } = require("discord.js");
 
@@ -42,7 +44,7 @@ const normalizeToken = require("../../../functions/normalizeDiscordTokenInput");
 const emojis = require("../../../configs/badgeEmojis");
 
 // Nhãn dùng chung với log đơn — một chỗ sửa, mọi nơi đổi theo.
-const { UNIT_VI } = badgeLog;
+const { UNIT_VI, BADGE_VI, fmt } = badgeLog;
 
 // ── Session token ────────────────────────────────────────────────────────────────
 
@@ -63,40 +65,42 @@ const _newSid = () => Math.random().toString(36).slice(2, 10);
 
 // ── Dựng UI ──────────────────────────────────────────────────────────────────────
 
-/** Chữ của luồng mua (template auto.badge.flow). */
-const flow = (client, vars = {}) => client.ui.card("auto.badge.flow", { user: null, ...vars });
-const cut = (s, n, fallback) => (s || fallback).slice(0, n);
-
-function _tokenModal(client) {
-    const t = flow(client);
+function _tokenModal() {
     return new ModalBuilder()
         .setCustomId("bg:token")
-        .setTitle(cut(t.text("tokenTitle"), 45, "Auto Badge"))
+        .setTitle("Auto Badge — nhập token")
         .addComponents(
             new ActionRowBuilder().addComponents(
                 new TextInputBuilder()
                     .setCustomId("token")
-                    .setLabel(cut(t.text("tokenLabel"), 45, "Token"))
+                    .setLabel("Token Discord của bạn")
                     .setStyle(TextInputStyle.Short)
                     .setRequired(true)
-                    .setPlaceholder(cut(t.text("tokenPlaceholder"), 100, " ")),
+                    .setPlaceholder("Dán token vào đây"),
             ),
         );
 }
 
-async function _badgeSelect(client, sid) {
+async function _badgeSelect(client, sid, hasNitro) {
     const badges = await pricing.sellableBadges(client);
     if (!badges.length) return null;
-    const t = flow(client);
     return new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder()
             .setCustomId(`bg:badge:${sid}`)
-            .setPlaceholder(t.placeholder("badge") || "Badge")
+            .setPlaceholder("Chọn loại badge")
             .addOptions(
                 badges.map((b) => ({
-                    emoji: emojis.badgeEmoji(b.key),
-                    ...t.option("badge", { badge: { key: b.key, label: b.label, kind: b.kind, __text: b.label } }),
+                    label: b.label,
                     value: b.key,
+                    emoji: emojis.badgeEmoji(b.key),
+                    description:
+                        b.key === "game_time"
+                            ? "Số giờ chơi game tích luỹ"
+                            : b.key === "game_variety"
+                              ? "Số lượng game đã chơi"
+                              : b.key === "hypesquad"
+                                ? "Đổi nhà HypeSquad — ăn ngay"
+                                : b.label,
                 })),
             ),
     );
@@ -106,31 +110,26 @@ async function _tierSelect(client, sid, badgeKey, hasNitro, values, currentHouse
     const tiers = await pricing.badgeTiers(client, badgeKey, { hasNitro });
     if (!tiers.length) return null;
 
-    const t = flow(client);
     const isChoice = tiers[0]?.kind === "choice";
     // Badge choice (HypeSquad): so theo nhà đang ở, đọc được cho mọi khách.
     // Badge tiered: so theo giá trị, chỉ biết được khi khách có Nitro.
     const owned = values?.[badgeKey]?.value ?? null;
     const options = tiers
-        .map((tier) => {
+        .map((t) => {
             const already = isChoice
-                ? currentHouse !== null && currentHouse === tier.houseId
-                : owned !== null && tier.threshold != null && owned >= tier.threshold;
-            const vars = {
-                key: tier.key,
-                name: tier.name,
-                threshold: tier.threshold ?? null,
-                unitText: UNIT_VI(tier.unit),
-                price: tier.finalPrice,
-                rarityName: tier.rarityName ?? "",
-                isChoice,
-                already,
-                __text: tier.name,
-            };
+                ? currentHouse !== null && currentHouse === t.houseId
+                : owned !== null && t.threshold != null && owned >= t.threshold;
             return {
-                emoji: emojis.tierEmoji(badgeKey, tier.key),
-                ...t.option("tier", vars),
-                value: tier.key,
+                label: isChoice
+                    ? t.name
+                    : `${t.name} — ${fmt(t.threshold)} ${UNIT_VI(t.unit)}`,
+                value: t.key,
+                emoji: emojis.tierEmoji(badgeKey, t.key),
+                description: already
+                    ? isChoice
+                        ? "Bạn đang ở nhà này rồi"
+                        : "Bạn đã đạt mốc này rồi"
+                    : `${fmt(t.finalPrice)}đ · ${t.rarityName}`,
                 // Ẩn thứ khách đã có — mua nhầm là tiền vứt đi.
                 _skip: already,
             };
@@ -142,34 +141,57 @@ async function _tierSelect(client, sid, badgeKey, hasNitro, values, currentHouse
     return new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder()
             .setCustomId(`bg:tier:${sid}:${badgeKey}`)
-            .setPlaceholder(t.placeholder("tier") || "Tier")
+            .setPlaceholder("Chọn mốc muốn mua")
             .addOptions(options.slice(0, 25)),
     );
 }
 
-function _declareModal(client, sid, badgeKey, tierKey, unit) {
-    const t = flow(client, { unitText: UNIT_VI(unit) });
+function _declareModal(sid, badgeKey, tierKey, unit) {
     return new ModalBuilder()
         .setCustomId(`bg:declare:${sid}:${badgeKey}:${tierKey}`)
-        .setTitle(cut(t.text("declareTitle"), 45, "Auto Badge"))
+        .setTitle("Khai tình trạng hiện tại")
         .addComponents(
             new ActionRowBuilder().addComponents(
                 new TextInputBuilder()
                     .setCustomId("value")
-                    .setLabel(cut(t.text("declareLabel"), 45, "?"))
+                    .setLabel(`Bạn đang có bao nhiêu ${UNIT_VI(unit)}?`)
                     .setStyle(TextInputStyle.Short)
                     .setRequired(true)
-                    .setPlaceholder(cut(t.text("declarePlaceholder"), 100, " ")),
+                    .setPlaceholder("Không rõ thì ghi 0"),
             ),
         );
 }
 
-/** Một câu của luồng mua, chỉ người bấm thấy; `edit` xoá embed/nút cũ của tin. */
-const say = (client, slot, vars = {}, { edit = false } = {}) => ({
-    content: flow(client, vars).text(slot),
-    ...(edit ? { embeds: [], components: [] } : {}),
-    flags: MessageFlags.Ephemeral,
-});
+function _paymentEmbed(client, payment) {
+    return new EmbedBuilder()
+        .setColor(client.funcs.hexToInt(client.configs.embed.color))
+        .setTitle("Thanh toán Auto Badge")
+        .setImage(payment.qrUrl)
+        .setDescription(
+            [
+                `**Badge:** ${BADGE_VI(payment.badgeKey)}`,
+                payment.threshold == null
+                    ? `**Lựa chọn:** ${payment.tierName}`
+                    : `**Mốc:** ${payment.tierName} — ${fmt(payment.threshold)} ${UNIT_VI(payment.unit)}`,
+                `**Số tiền:** ${fmt(payment.amount)}đ`,
+                `**Nội dung CK:** \`${payment.transferCode}\``,
+                "",
+                `QR hết hạn sau ${Math.round(EXPIRE_MS / 60000)} phút.`,
+            ].join("\n"),
+        )
+        .setFooter({ text: `Mã đơn: ${payment.id}` });
+}
+
+function _cancelRow(paymentId) {
+    return new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`bg:cancel:${paymentId}`)
+            .setLabel("Huỷ đơn")
+            .setStyle(ButtonStyle.Danger),
+    );
+}
+
+const _ephemeral = (content) => ({ content, flags: MessageFlags.Ephemeral });
 
 // ── Tạo QR ───────────────────────────────────────────────────────────────────────
 
@@ -178,10 +200,12 @@ async function _startPayment(client, interaction, session, badgeKey, tierKey, de
 
     if (q.alreadyOwned === true) {
         return interaction.editReply(
-            say(client, "alreadyOwned", {
-                payment: badgeLog.paymentVars({ badgeKey, tierName: q.tierName, threshold: q.kind === "choice" ? null : q.threshold, unit: q.unit }),
-                currentValue: q.currentValue,
-            }),
+            _ephemeral(
+                q.kind === "choice"
+                    ? `❌ Tài khoản của bạn **đang ở nhà ${q.tierName}** rồi. Hãy chọn nhà khác.`
+                    : `❌ Tài khoản của bạn **đã đạt mốc ${q.tierName}** rồi ` +
+                      `(${fmt(q.currentValue)}/${fmt(q.threshold)} ${UNIT_VI(q.unit)}). Hãy chọn mốc cao hơn.`,
+            ),
         );
     }
 
@@ -200,14 +224,16 @@ async function _startPayment(client, interaction, session, badgeKey, tierKey, de
 
     // Chỉ badge tiered mới có thể "mua nhầm mốc đã có". HypeSquad đọc được nhà
     // hiện tại miễn phí nên không bao giờ rơi vào tình huống đó.
-    const warn = !(q.hasNitro || q.kind === "choice");
+    const warn =
+        q.hasNitro || q.kind === "choice"
+            ? ""
+            : "\n\n⚠️ Sau khi thanh toán, hệ thống sẽ kiểm tra tài khoản của bạn. " +
+              "**Nếu bạn đã đạt mốc này từ trước, số tiền đã chuyển sẽ không được hoàn lại.**";
 
     return interaction.editReply({
-        ...client.ui.message(
-            "auto.badge.payment",
-            { payment: badgeLog.paymentVars(payment, { expireMinutes: Math.round(EXPIRE_MS / 60000) }), warn },
-            { buttons: { cancel: { customId: `bg:cancel:${payment.id}` } }, edit: true },
-        ),
+        content: warn || null,
+        embeds: [_paymentEmbed(client, payment)],
+        components: [_cancelRow(payment.id)],
         flags: MessageFlags.Ephemeral,
     });
 }
@@ -221,7 +247,7 @@ module.exports = {
         if (!id || !id.startsWith("bg:")) return;
 
         if (!PanelBadge.isEnabled()) {
-            const reply = say(client, "disabled");
+            const reply = _ephemeral("Auto Badge hiện chưa được bật.");
             return interaction.replied || interaction.deferred
                 ? interaction.editReply(reply)
                 : interaction.reply(reply);
@@ -231,8 +257,15 @@ module.exports = {
             // ── Bấm nút bắt đầu ────────────────────────────────────────────────
             if (id === "bg:start") {
                 const open = await getOpenPayment(client, interaction.user.id);
-                if (open) return interaction.reply(say(client, "openPayment", { payment: badgeLog.paymentVars(open) }));
-                return interaction.showModal(_tokenModal(client));
+                if (open) {
+                    return interaction.reply(
+                        _ephemeral(
+                            `Bạn đang có một đơn chờ thanh toán (\`${open.id}\`). ` +
+                                `Hãy thanh toán hoặc huỷ nó trước.`,
+                        ),
+                    );
+                }
+                return interaction.showModal(_tokenModal());
             }
 
             // ── Nhập token ─────────────────────────────────────────────────────
@@ -240,7 +273,7 @@ module.exports = {
                 await interaction.deferReply({ flags: MessageFlags.Ephemeral });
                 const raw = interaction.fields.getTextInputValue("token");
                 const token = normalizeToken(raw);
-                if (!token) return interaction.editReply(say(client, "invalidToken"));
+                if (!token) return interaction.editReply(_ephemeral("Token không hợp lệ."));
 
                 const info = await PanelBadge.check({ token });
                 const sid = _newSid();
@@ -251,12 +284,17 @@ module.exports = {
                     hypesquadHouse: info.hypesquadHouse ?? null,
                 });
 
-                const row = await _badgeSelect(client, sid);
-                if (!row) return interaction.editReply(say(client, "noOffers"));
+                const row = await _badgeSelect(client, sid, info.hasNitro);
+                if (!row) return interaction.editReply(_ephemeral("Hiện chưa có mốc nào mở bán."));
+
+                const note = info.hasNitro
+                    ? "Tài khoản có Nitro — hệ thống đọc được tiến độ của bạn và đã ẩn những mốc bạn đã đạt."
+                    : "Tài khoản không có Nitro — giá có phụ thu, và bạn sẽ cần tự khai tình trạng hiện tại.";
 
                 return interaction.editReply({
-                    ...say(client, "verified", { username: info.username, hasNitro: !!info.hasNitro }),
+                    content: `Đã xác thực **${info.username}**.\n${note}`,
                     components: [row],
+                    flags: MessageFlags.Ephemeral,
                 });
             }
 
@@ -265,7 +303,11 @@ module.exports = {
                 await interaction.deferUpdate();
                 const sid = id.split(":")[2];
                 const session = await _getSession(client, sid);
-                if (!session) return interaction.editReply(say(client, "sessionExpired"));
+                if (!session) {
+                    return interaction.editReply(
+                        _ephemeral("Phiên đã hết hạn. Bấm lại nút để bắt đầu."),
+                    );
+                }
                 const badgeKey = interaction.values[0];
                 const row = await _tierSelect(
                     client,
@@ -275,15 +317,29 @@ module.exports = {
                     session.values,
                     session.hypesquadHouse ?? null,
                 );
-                if (!row) return interaction.editReply({ ...say(client, "noTiersLeft"), components: [] });
-                return interaction.editReply({ ...say(client, "chooseTier"), components: [row] });
+                if (!row) {
+                    return interaction.editReply({
+                        content: "Không còn mốc nào bạn chưa đạt cho badge này.",
+                        components: [],
+                        flags: MessageFlags.Ephemeral,
+                    });
+                }
+                return interaction.editReply({
+                    content: "Chọn mốc bạn muốn mua:",
+                    components: [row],
+                    flags: MessageFlags.Ephemeral,
+                });
             }
 
             // ── Chọn mốc ───────────────────────────────────────────────────────
             if (id.startsWith("bg:tier:")) {
                 const [, , sid, badgeKey] = id.split(":");
                 const session = await _getSession(client, sid);
-                if (!session) return interaction.reply(say(client, "sessionExpired"));
+                if (!session) {
+                    return interaction.reply(
+                        _ephemeral("Phiên đã hết hạn. Bấm lại nút để bắt đầu."),
+                    );
+                }
                 const tierKey = interaction.values[0];
 
                 const tiers = await pricing.badgeTiers(client, badgeKey, {
@@ -294,7 +350,9 @@ module.exports = {
                 // Không Nitro + badge tiered: bắt khai trước, vì ta chưa đọc được
                 // gì của họ. Badge choice thì đọc được miễn phí, khỏi hỏi.
                 if (!session.hasNitro && tier?.kind !== "choice") {
-                    return interaction.showModal(_declareModal(client, sid, badgeKey, tierKey, tier?.unit ?? "games"));
+                    return interaction.showModal(
+                        _declareModal(sid, badgeKey, tierKey, tier?.unit ?? "games"),
+                    );
                 }
 
                 await interaction.deferUpdate();
@@ -306,9 +364,15 @@ module.exports = {
                 await interaction.deferReply({ flags: MessageFlags.Ephemeral });
                 const [, , sid, badgeKey, tierKey] = id.split(":");
                 const session = await _getSession(client, sid);
-                if (!session) return interaction.editReply(say(client, "sessionExpired"));
+                if (!session) {
+                    return interaction.editReply(
+                        _ephemeral("Phiên đã hết hạn. Bấm lại nút để bắt đầu."),
+                    );
+                }
                 const declared = Number(interaction.fields.getTextInputValue("value"));
-                if (!Number.isFinite(declared) || declared < 0) return interaction.editReply(say(client, "invalidNumber"));
+                if (!Number.isFinite(declared) || declared < 0) {
+                    return interaction.editReply(_ephemeral("Vui lòng nhập một số hợp lệ."));
+                }
                 return _startPayment(client, interaction, session, badgeKey, tierKey, declared);
             }
 
@@ -318,14 +382,29 @@ module.exports = {
                 const paymentId = id.split(":")[2];
                 const payment = await getPaymentById(client, paymentId);
                 if (payment && payment.userId !== interaction.user.id) return;
-                if (payment && payment.status !== "pending") return interaction.editReply(say(client, "paidNoCancel", {}, { edit: true }));
+                if (payment && payment.status !== "pending") {
+                    return interaction.editReply({
+                        content: "Đơn này đã được thanh toán, không huỷ được.",
+                        embeds: [],
+                        components: [],
+                        flags: MessageFlags.Ephemeral,
+                    });
+                }
                 await cancelPayment(client, paymentId);
                 // cancelPayment xoá hẳn bản ghi, nên phải sửa log bằng bản đã đọc ở trên.
                 if (payment) await badgeLog.updateOrderLog(client, payment, "cancelled", "Khách tự huỷ.");
-                return interaction.editReply(say(client, "cancelled", {}, { edit: true }));
+                return interaction.editReply({
+                    content: "Đã huỷ đơn.",
+                    embeds: [],
+                    components: [],
+                    flags: MessageFlags.Ephemeral,
+                });
             }
         } catch (err) {
-            const reply = err.tokenDead ? say(client, "tokenDead") : say(client, "error", { error: err.message });
+            const msg = err.tokenDead
+                ? "Token không hợp lệ hoặc đã chết."
+                : `Lỗi: ${err.message}`;
+            const reply = _ephemeral(msg);
             if (interaction.replied || interaction.deferred) {
                 await interaction.editReply(reply).catch(() => null);
             } else {

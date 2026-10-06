@@ -1,9 +1,9 @@
 const { SlashCommandBuilder } = require("discord.js");
 const {
+    getRunningMap,
     stopAccount,
     removeStoredAccount,
 } = require("../../../extensions/AutoQuest");
-const { accountVars } = require("../../../functions/autoQuestHelpers");
 
 module.exports = {
     deferReply: { ephemeral: true },
@@ -24,9 +24,30 @@ module.exports = {
             accountId,
         );
         stopAccount(interaction.user.id, accountId);
-        if (!removed) return interaction.editReply(client.ui.message("auto.quest.cmd.removeNotFound", { accountId }));
-        return interaction.editReply(
-            client.ui.message("auto.quest.cmd.removed", { account: accountVars(accountId, removed.username), user: client.ui.user(interaction.user) }),
-        );
+        if (!removed)
+            return interaction.editReply({
+                embeds: [
+                    client.embed(
+                        `Không tìm thấy account \`${accountId}\` trong storage.`,
+                    ),
+                ],
+            });
+        return interaction.editReply({
+            embeds: [
+                client.embed("", {
+                    title: "Đã xóa account",
+                    color: 0xed4245,
+                    fields: [
+                        {
+                            name: "Tài khoản",
+                            value: removed.username,
+                            inline: true,
+                        },
+                        { name: "ID", value: `\`${accountId}\``, inline: true },
+                    ],
+                    timestamp: true,
+                }),
+            ],
+        });
     },
 };

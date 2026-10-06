@@ -70,10 +70,3 @@ không đơn nào bị đóng khi khách chưa nhận link.
 - `dg_payments` — đơn chờ chuyển khoản (xóa khi hết hạn QR).
 - `dg_orders` — đơn đã thanh toán: `status` = `paid` → `delivering` → `completed`
   (hoặc `dm_failed`, `delivered` = đã giao nhưng Shop chưa hoàn thành, `cancelled`).
-
-## Sửa chữ / embed
-
-Mọi chữ của Deco Gift (panel, các màn hình chọn deco, QR, DM, tin staff, câu trả
-lời admin) là mẫu trong `templates/decoGift.js`, sửa được trên trang **Embeds** của
-bot-panel — không cần sửa code. Panel `/dg-setup` đã gửi được cập nhật lại ở tab
-"Panel đã gửi" (panel gửi trước bản này: thêm bằng link tin nhắn).

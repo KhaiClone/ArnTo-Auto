@@ -1,7 +1,7 @@
 /**
  * autoRobux.js (interactionCreate event)
- * Thin interaction handler — all logic lives in extensions/AutoRobux.js, every
- * word in templates/robux.js. All custom IDs are namespaced with "rb:" prefix.
+ * Thin interaction handler — all logic lives in extensions/AutoRobux.js
+ * All custom IDs are namespaced with "rb:" prefix.
  */
 
 const {
@@ -9,6 +9,7 @@ const {
     ModalBuilder,
     TextInputBuilder,
     TextInputStyle,
+    StringSelectMenuBuilder,
 } = require("discord.js");
 
 const {
@@ -19,14 +20,13 @@ const {
     getOpenRobuxPayment,
     getRobuxPaymentById,
     sendRobuxOrderLog,
-    robuxPaymentMessage,
+    buildRobuxPaymentEmbed,
+    buildRobuxCancelRow,
 } = require("../../../extensions/AutoRobux");
 
 // In-memory session cache: sessionId → { robux, price }
 // Stores the selected package between select menu and modal submit
 const sessionCache = new Map();
-
-const ephemeral = (client, key, vars = {}) => client.ui.message(key, vars, { ephemeral: true });
 
 module.exports = {
     name: "interactionCreate",
@@ -44,7 +44,10 @@ module.exports = {
                 return await _handleModal(client, interaction);
         } catch (err) {
             console.error("[autoRobux interaction] error:", err);
-            const payload = ephemeral(client, "auto.robux.error", { error: err.message });
+            const payload = {
+                embeds: [client.embed(err.message, { title: "Có lỗi xảy ra" })],
+                ephemeral: true,
+            };
             if (interaction.deferred || interaction.replied)
                 await interaction.followUp(payload).catch(() => null);
             else await interaction.reply(payload).catch(() => null);
@@ -62,16 +65,46 @@ async function _handleButton(client, interaction) {
         const paymentId = customId.split(":")[2];
         const payment = await getRobuxPaymentById(client, paymentId);
 
-        if (!payment) return interaction.reply(ephemeral(client, "auto.robux.cancel.notFound"));
-        if (payment.userId !== interaction.user.id) return interaction.reply(ephemeral(client, "auto.robux.cancel.notYours"));
-        if (payment.status !== "pending") return interaction.reply(ephemeral(client, "auto.robux.cancel.handled"));
+        if (!payment)
+            return interaction.reply({
+                ephemeral: true,
+                embeds: [client.embed("Không tìm thấy đơn.", { title: "Lỗi" })],
+            });
+        if (payment.userId !== interaction.user.id)
+            return interaction.reply({
+                ephemeral: true,
+                embeds: [
+                    client.embed("Bạn không thể hủy đơn của người khác.", {
+                        title: "Không có quyền",
+                    }),
+                ],
+            });
+        if (payment.status !== "pending")
+            return interaction.reply({
+                ephemeral: true,
+                embeds: [
+                    client.embed("Đơn này đã được xử lý.", {
+                        title: "Không thể hủy",
+                    }),
+                ],
+            });
 
         await interaction.deferUpdate();
         await cancelRobuxPayment(client, paymentId);
         await cancelRobuxOrderLog(client, paymentId);
 
         const user = await client.users.fetch(payment.userId).catch(() => null);
-        if (user) await user.send(client.ui.message("auto.robux.dm.cancelled", { user: client.ui.user(user) })).catch(() => null);
+        if (user)
+            await user
+                .send({
+                    embeds: [
+                        client.embed("", {
+                            title: "Đã hủy đơn Robux",
+                            color: 0xed4245,
+                        }),
+                    ],
+                })
+                .catch(() => null);
         return;
     }
 }
@@ -88,14 +121,23 @@ async function _handleSelectMenu(client, interaction) {
     // Check existing pending payment
     const existed = await getOpenRobuxPayment(client, interaction.user.id);
     if (existed) {
-        return interaction.update(robuxPaymentMessage(client, existed, "existed", { edit: true }));
+        return interaction.update({
+            embeds: [
+                buildRobuxPaymentEmbed(
+                    client,
+                    existed,
+                    "Bạn đã có đơn chờ thanh toán. Thanh toán hoặc chờ hết hạn để tạo đơn mới.",
+                ),
+            ],
+            components: [buildRobuxCancelRow(existed.id)],
+        });
     }
 
     // Store package in session, show modal for gamepass link
     const sessionId = Math.random().toString(36).slice(2, 12);
     sessionCache.set(sessionId, { robux: pkg.robux, price: pkg.price });
     setTimeout(() => sessionCache.delete(sessionId), 15 * 60 * 1000);
-    return interaction.showModal(_buildGamepassModal(client, sessionId, pkg));
+    return interaction.showModal(_buildGamepassModal(sessionId, pkg));
 }
 
 // ── Modal handler ──────────────────────────────────────────────────────────────
@@ -106,7 +148,17 @@ async function _handleModal(client, interaction) {
     const sessionId = interaction.customId.split(":")[2];
     const session = sessionCache.get(sessionId);
     await interaction.update({});
-    if (!session) return interaction.followUp(ephemeral(client, "auto.robux.sessionExpired"));
+    if (!session) {
+        return interaction.followUp({
+            ephemeral: true,
+            embeds: [
+                client.embed(
+                    "Phiên làm việc đã hết hạn. Vui lòng chọn lại gói.",
+                    { title: "Lỗi phiên" },
+                ),
+            ],
+        });
+    }
     sessionCache.delete(sessionId);
 
     const accountName = interaction.fields
@@ -125,7 +177,15 @@ async function _handleModal(client, interaction) {
             !link.startsWith("https://www.roblox.com/") &&
             !link.startsWith("https://roblox.com/")
         ) {
-            return interaction.followUp(ephemeral(client, "auto.robux.badLink", { index: i }));
+            return interaction.followUp({
+                ephemeral: true,
+                embeds: [
+                    client.embed(
+                        `Link Gamepass #${i} không hợp lệ. Vui lòng nhập đúng link từ Roblox.`,
+                        { title: "Link không hợp lệ" },
+                    ),
+                ],
+            });
         }
 
         gamepassLinks.push(link);
@@ -133,7 +193,19 @@ async function _handleModal(client, interaction) {
 
     // Check existing pending payment again (race condition safety)
     const existed = await getOpenRobuxPayment(client, interaction.user.id);
-    if (existed) return interaction.followUp(robuxPaymentMessage(client, existed, "existed", { ephemeral: true }));
+    if (existed) {
+        return interaction.followUp({
+            ephemeral: true,
+            embeds: [
+                buildRobuxPaymentEmbed(
+                    client,
+                    existed,
+                    "Bạn đã có đơn chờ thanh toán. Thanh toán hoặc chờ hết hạn để tạo đơn mới.",
+                ),
+            ],
+            components: [buildRobuxCancelRow(existed.id)],
+        });
+    }
 
     const payment = await createRobuxPayment(client, {
         userId: interaction.user.id,
@@ -154,26 +226,37 @@ async function _handleModal(client, interaction) {
         gamepassLinks,
     );
 
-    return interaction.followUp(robuxPaymentMessage(client, payment, "created", { ephemeral: true }));
+    return interaction.followUp({
+        ephemeral: true,
+        embeds: [
+            buildRobuxPaymentEmbed(
+                client,
+                payment,
+                `Đã tạo QR thanh toán cho **${session.robux.toLocaleString()} Robux**. Chuyển khoản xong admin sẽ xử lý cho bạn.`,
+            ),
+        ],
+        components: [buildRobuxCancelRow(payment.id)],
+    });
 }
 
 // ── UI helpers ─────────────────────────────────────────────────────────────────
 
-/** The gamepass form (template auto.robux.form): 1 link per 250 Robux, max 4, plus the account name. */
-function _buildGamepassModal(client, sessionId, pkg) {
+function _buildGamepassModal(sessionId, pkg) {
+    // 1 gamepass input per 250 Robux, capped at 4 (pkg.robux max = 1000)
     const linkCount = Math.min(pkg.robux / 250, 4);
-    const vars = { robux: pkg.robux, robuxText: pkg.robux.toLocaleString(), price: pkg.price, linkCount };
-    const card = client.ui.card("auto.robux.form", vars);
-    const cut = (s, n, fallback) => (s || fallback).slice(0, n);
 
-    const gamepassRows = [];
+    const gamepaxRows = [];
     for (let i = 1; i <= linkCount; i++) {
-        gamepassRows.push(
+        gamepaxRows.push(
             new ActionRowBuilder().addComponents(
                 new TextInputBuilder()
                     .setCustomId(`gamepass_link_${i}`)
-                    .setLabel(cut(card.text(linkCount === 1 ? "linkLabelOne" : "linkLabelMany", { index: i }), 45, `Link #${i}`))
-                    .setPlaceholder(cut(card.text("linkPlaceholder"), 100, " "))
+                    .setLabel(
+                        linkCount === 1
+                            ? "Link Gamepass Roblox của bạn"
+                            : `Link Gamepass #${i} (250 Robux)`,
+                    )
+                    .setPlaceholder("https://www.roblox.com/game-pass/...")
                     .setStyle(TextInputStyle.Short)
                     .setRequired(true),
             ),
@@ -183,14 +266,16 @@ function _buildGamepassModal(client, sessionId, pkg) {
     const accountRow = new ActionRowBuilder().addComponents(
         new TextInputBuilder()
             .setCustomId("account_name")
-            .setLabel(cut(card.text("accountLabel"), 45, "Roblox"))
-            .setPlaceholder(cut(card.text("accountPlaceholder"), 100, " "))
+            .setLabel("Tên tài khoản Roblox của bạn")
+            .setPlaceholder("Nhập username Roblox...")
             .setStyle(TextInputStyle.Short)
             .setRequired(true),
     );
 
     return new ModalBuilder()
         .setCustomId(`rb:gamepass_modal:${sessionId}`)
-        .setTitle(cut(card.text("title"), 45, "Robux"))
-        .addComponents(...gamepassRows, accountRow);
+        .setTitle(
+            `Mua ${pkg.robux.toLocaleString()} Robux — ${pkg.price.toLocaleString("vi-VN")}đ`,
+        )
+        .addComponents(...gamepaxRows, accountRow);
 }

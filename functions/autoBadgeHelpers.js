@@ -26,8 +26,7 @@ const BADGE_VI = (k) =>
 const fmt = (n) => Number(n).toLocaleString("vi-VN");
 
 // ── Màu ──────────────────────────────────────────────────────────────────────────
-// Trùng bảng màu của Auto Quest để hai kênh log nhìn như một hệ. Chữ và màu của log
-// / DM nằm ở templates/badge.js (sửa được trên trang Embeds của bot-panel).
+// Trùng bảng màu của Auto Quest để hai kênh log nhìn như một hệ.
 
 const COLOR = {
     pending: 0x5865f2, // xanh Discord — đang chờ tiền
@@ -37,32 +36,25 @@ const COLOR = {
     bad: 0xed4245, // đỏ — hỏng / huỷ / tịch thu
 };
 
-// ── Biến cho template ────────────────────────────────────────────────────────────
-
-/** Một đơn badge như template thấy (type badgePayment). */
-function paymentVars(p = {}, extra = {}) {
-    return {
-        id: p.id ?? "",
-        orderId: p.orderId ?? "",
-        userId: p.userId ?? null,
-        badgeKey: p.badgeKey ?? "",
-        badgeName: BADGE_VI(p.badgeKey),
-        tierKey: p.tierKey ?? "",
-        tierName: p.tierName ?? "",
-        isChoice: p.threshold == null,
-        threshold: p.threshold ?? null,
-        unitText: UNIT_VI(p.unit),
-        amount: p.amount ?? 0,
-        hasNitro: !!p.hasNitro,
-        declaredValue: p.declaredValue ?? null,
-        transferCode: p.transferCode ?? "",
-        qrUrl: p.qrUrl ?? null,
-        __text: p.orderId || p.id || "",
-        ...extra,
-    };
-}
+const STATE = {
+    pending: { text: "⏳ Chờ thanh toán", color: COLOR.pending },
+    paid: { text: "💸 Đã thanh toán — đang gửi", color: COLOR.paid },
+    sent: { text: "✅ Hoàn tất", color: COLOR.done },
+    manual_review: { text: "⏳ Chờ admin duyệt", color: COLOR.warn },
+    forfeited: { text: "🔴 Tịch thu", color: COLOR.bad },
+    refund_due: { text: "↩️ Cần hoàn tiền", color: COLOR.bad },
+    failed: { text: "❌ Lỗi", color: COLOR.bad },
+    cancelled: { text: "🚫 Đã huỷ", color: COLOR.bad },
+    expired: { text: "⌛ Hết hạn QR", color: COLOR.bad },
+};
 
 // ── Log đơn ở kênh admin ─────────────────────────────────────────────────────────
+
+function _tierLine(p) {
+    return p.threshold == null
+        ? String(p.tierName)
+        : `${p.tierName} — ${fmt(p.threshold)} ${UNIT_VI(p.unit)}`;
+}
 
 function _footer(payment) {
     const at = new Date(payment.createdAt ?? Date.now()).toLocaleString("vi-VN", {
@@ -73,17 +65,38 @@ function _footer(payment) {
 }
 
 /**
- * Tin log của một đơn (template auto.badge.log).
  * @param {object} payment  bản ghi badge_payments
- * @param {string} state    pending / paid / sent / manual_review / forfeited / refund_due / failed / cancelled / expired
+ * @param {string} state    khoá trong STATE
  * @param {string} [note]   một dòng mô tả thêm (lý do huỷ, thông báo lỗi…)
  */
-function orderLogMessage(client, payment, state, note) {
-    return client.ui.message(
-        "auto.badge.log",
-        { payment: paymentVars(payment), state: state || "pending", note: note || "", footer: payment.logFooter || _footer(payment) },
-        { edit: true },
-    );
+function buildOrderLogEmbed(client, payment, state, note) {
+    const st = STATE[state] ?? STATE.pending;
+    const fields = [
+        { name: "👤 Khách hàng", value: `<@${payment.userId}>`, inline: true },
+        { name: "🎖️ Badge", value: BADGE_VI(payment.badgeKey), inline: true },
+        { name: "🎯 Mốc", value: _tierLine(payment), inline: true },
+        { name: "💰 Số tiền", value: `${fmt(payment.amount)}đ`, inline: true },
+        { name: "💎 Nitro", value: payment.hasNitro ? "Có" : "Không", inline: true },
+        { name: "📋 Trạng thái", value: st.text, inline: true },
+    ];
+    // Khách không Nitro tự khai — ghi lại con số họ khai để đối chiếu khi tranh chấp.
+    if (!payment.hasNitro && payment.declaredValue != null) {
+        fields.push({
+            name: "✍️ Khách khai",
+            value: `${fmt(payment.declaredValue)} ${UNIT_VI(payment.unit)}`,
+            inline: true,
+        });
+    }
+    if (payment.orderId) {
+        fields.push({ name: "🧾 Mã đơn panel", value: `\`${payment.orderId}\``, inline: false });
+    }
+    return client.embed(note || "", {
+        title: "🎖️ Đơn Auto Badge",
+        color: st.color,
+        fields,
+        footer: { text: payment.logFooter || _footer(payment) },
+        timestamp: true,
+    });
 }
 
 async function _logChannel(client) {
@@ -102,7 +115,8 @@ async function sendOrderLog(client, payment) {
         const ch = await _logChannel(client);
         if (!ch) return null;
         const footerText = _footer(payment);
-        const msg = await ch.send(orderLogMessage(client, { ...payment, logFooter: footerText }, "pending"));
+        const embed = buildOrderLogEmbed(client, { ...payment, logFooter: footerText }, "pending");
+        const msg = await ch.send({ embeds: [embed] });
         return { messageId: msg.id, footerText };
     } catch (e) {
         console.warn(`[autoBadgeHelpers] sendOrderLog: ${e.message}`);
@@ -118,7 +132,7 @@ async function updateOrderLog(client, payment, state, note) {
         if (!ch) return;
         const msg = await ch.messages.fetch(payment.logMessageId).catch(() => null);
         if (!msg) return;
-        await msg.edit(orderLogMessage(client, payment, state, note));
+        await msg.edit({ embeds: [buildOrderLogEmbed(client, payment, state, note)] });
     } catch (e) {
         console.warn(`[autoBadgeHelpers] updateOrderLog: ${e.message}`);
     }
@@ -126,12 +140,12 @@ async function updateOrderLog(client, payment, state, note) {
 
 // ── DM cho khách ─────────────────────────────────────────────────────────────────
 
-/** DM template `key` cho khách. Khách chặn DM thì im lặng bỏ qua, không làm hỏng luồng đơn. */
-async function dm(client, userId, key, vars = {}) {
+/** Gửi một embed vào DM. Khách chặn DM thì im lặng bỏ qua, không làm hỏng luồng đơn. */
+async function dm(client, userId, embed) {
     const user = await client.users.fetch(userId).catch(() => null);
     if (!user) return false;
     return user
-        .send(client.ui.message(key, { user: client.ui.user(user), ...vars }))
+        .send({ embeds: [embed] })
         .then(() => true)
         .catch(() => false);
 }
@@ -141,8 +155,7 @@ module.exports = {
     BADGE_VI,
     fmt,
     COLOR,
-    paymentVars,
-    orderLogMessage,
+    buildOrderLogEmbed,
     sendOrderLog,
     updateOrderLog,
     dm,

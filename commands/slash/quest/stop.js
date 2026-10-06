@@ -1,6 +1,5 @@
 const { SlashCommandBuilder } = require("discord.js");
 const { getRunningMap, stopAccount } = require("../../../extensions/AutoQuest");
-const { accountVars } = require("../../../functions/autoQuestHelpers");
 
 module.exports = {
     deferReply: { ephemeral: true },
@@ -16,10 +15,32 @@ module.exports = {
     async execute(client, interaction) {
         const accountId = interaction.options.getString("account_id", true);
         const entry = getRunningMap(interaction.user.id).get(accountId);
-        if (!entry) return interaction.editReply(client.ui.message("auto.quest.cmd.stopNotFound", { accountId }));
+        if (!entry)
+            return interaction.editReply({
+                embeds: [
+                    client.embed(
+                        `Không tìm thấy account \`${accountId}\` đang chạy.`,
+                        { title: "Không tìm thấy" },
+                    ),
+                ],
+            });
         stopAccount(interaction.user.id, accountId);
-        return interaction.editReply(
-            client.ui.message("auto.quest.cmd.stopped", { account: accountVars(accountId, entry.username), user: client.ui.user(interaction.user) }),
-        );
+        return interaction.editReply({
+            embeds: [
+                client.embed("", {
+                    title: "Đã dừng account",
+                    color: 0xed4245,
+                    fields: [
+                        {
+                            name: "Tài khoản",
+                            value: entry.username,
+                            inline: true,
+                        },
+                        { name: "ID", value: `\`${accountId}\``, inline: true },
+                    ],
+                    timestamp: true,
+                }),
+            ],
+        });
     },
 };

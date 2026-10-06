@@ -2,7 +2,6 @@
  * autoQuest.js (interactionCreate event)
  * Handles all Auto Quest interactions: buttons, select menus, modals.
  * All custom IDs are namespaced with "quest:" prefix.
- * Every message is a template (templates/quest.js), editable on the bot-panel.
  */
 
 const {
@@ -78,16 +77,12 @@ function _isStaffFree(client, userId) {
 
 const {
     sendOrderLog,
-    questPaymentMessage,
-    monthlyPaymentMessage,
+    buildPaymentEmbed,
+    buildPaymentActionRow,
+    buildMonthlyPaymentEmbed,
+    buildMonthlyCancelRow,
     cancelOrderLog,
-    accountVars,
-    planLabel,
 } = require("../../../functions/autoQuestHelpers");
-
-const ms = (iso) => (iso ? new Date(iso).getTime() : null);
-/** A quest-template message, ephemeral by default (opts.ephemeral = false to turn off). */
-const msg = (client, key, vars = {}, opts = {}) => client.ui.message(key, vars, { ephemeral: true, ...opts });
 
 module.exports = {
     name: "interactionCreate",
@@ -114,7 +109,10 @@ module.exports = {
                 return await _handleModal(client, interaction);
         } catch (err) {
             console.error("[autoQuest interaction] error:", err);
-            const payload = msg(client, "auto.quest.error", { error: err.message });
+            const payload = {
+                embeds: [client.embed(err.message, { title: "Có lỗi xảy ra" })],
+                ephemeral: true,
+            };
             if (interaction.deferred || interaction.replied) {
                 await interaction.followUp(payload).catch(() => null);
             } else {
@@ -127,7 +125,6 @@ module.exports = {
 // ── Button handler ─────────────────────────────────────────────────────────────
 async function _handleButton(client, interaction) {
     const { customId } = interaction;
-    const user = client.ui.user(interaction.user);
 
     // "Nhập token" button on the quest panel
     if (customId === "quest:enter_token") {
@@ -137,15 +134,25 @@ async function _handleButton(client, interaction) {
         );
         if (refreshRecord) {
             return interaction.showModal(
-                _buildTokenModal(client, `quest:refresh_modal:${refreshRecord.accountId}`, "titleRefresh"),
+                _buildTokenModal(
+                    `quest:refresh_modal:${refreshRecord.accountId}`,
+                    "Nhập lại token Discord",
+                ),
             );
         }
-        return interaction.showModal(_buildTokenModal(client, "quest:token_modal", "titleNew"));
+        return interaction.showModal(
+            _buildTokenModal("quest:token_modal", "Nhập token Discord"),
+        );
     }
 
     // "Gia hạn theo tháng" button on the quest panel
     if (customId === "quest:enter_token_monthly") {
-        return interaction.showModal(_buildTokenModal(client, "quest:monthly_token_modal", "titleMonthly"));
+        return interaction.showModal(
+            _buildTokenModal(
+                "quest:monthly_token_modal",
+                "Nhập token Discord (gói tháng)",
+            ),
+        );
     }
 
     // "Cập nhật token" button — for accounts whose token has died. Opens the token
@@ -161,12 +168,31 @@ async function _handleButton(client, interaction) {
         );
         if (refreshRecord)
             return interaction.showModal(
-                _buildTokenModal(client, `quest:refresh_modal:${refreshRecord.accountId}`, "titleRefresh"),
+                _buildTokenModal(
+                    `quest:refresh_modal:${refreshRecord.accountId}`,
+                    "Nhập lại token Discord",
+                ),
             );
         const refreshable = await _refreshableAccounts(client, interaction.user.id);
         if (refreshable.size)
-            return interaction.showModal(_buildTokenModal(client, "quest:refresh_modal:any", "titleRefresh"));
-        return interaction.reply(msg(client, "auto.quest.noRefreshable", { user }));
+            return interaction.showModal(
+                _buildTokenModal(
+                    "quest:refresh_modal:any",
+                    "Nhập lại token Discord",
+                ),
+            );
+        return interaction.reply({
+            ephemeral: true,
+            embeds: [
+                client.embed(
+                    "Bạn không có account nào đang chờ cập nhật token. Nút này chỉ dùng khi bot báo token của bạn bị lỗi, hoặc khi bạn đang có gói tháng.",
+                    {
+                        title: "🔑 Cập nhật token",
+                        color: 0xfee75c,
+                    },
+                ),
+            ],
+        });
     }
 
     if (customId === "quest:check_token") {
@@ -174,6 +200,8 @@ async function _handleButton(client, interaction) {
 
         // When execution is delegated to the panel, read status from there.
         if (PanelQuest.isEnabled()) {
+            const rel = (iso) =>
+                `<t:${Math.floor(new Date(iso).getTime() / 1000)}:R>`;
             const stLabel = {
                 running: "Đang chạy",
                 done: "Đã xong",
@@ -184,55 +212,111 @@ async function _handleButton(client, interaction) {
             const { single = [], monthly = [] } = await PanelQuest.listByRef(
                 interaction.user.id,
             );
-            const accounts = [];
+            const fields = [];
             for (const a of single.slice(0, 20)) {
                 const qs = a.quests || {};
-                accounts.push({
-                    accountId: a.accountId,
-                    username: a.username,
-                    plan: "single",
-                    planText: planLabel("single"),
-                    status: a.status,
-                    statusText: stLabel[a.status] ?? a.status,
-                    questsTotal: Object.keys(qs).length,
-                    questsDone: Object.values(qs).filter((q) => q.state === "done").length,
-                    completedCount: a.completedCount ?? 0,
-                    __text: a.username,
+                const total = Object.keys(qs).length;
+                const done = Object.values(qs).filter((q) => q.state === "done").length;
+                fields.push({
+                    name: a.username,
+                    value: [
+                        `ID: \`${a.accountId}\``,
+                        "Loại: ⚡ Quest lẻ",
+                        `Trạng thái: ${stLabel[a.status] ?? a.status}`,
+                        total ? `Quest: ${done}/${total}` : `Đã xong: ${a.completedCount}`,
+                    ].join("\n"),
+                    inline: true,
                 });
             }
             for (const a of monthly.slice(0, 5)) {
-                accounts.push({
-                    accountId: a.accountId,
-                    username: a.username,
-                    plan: "monthly",
-                    planText: planLabel("monthly"),
-                    monthlyExpiresAt: ms(a.monthlyExpiresAt),
-                    __text: a.username,
+                fields.push({
+                    name: a.username,
+                    value: [
+                        `ID: \`${a.accountId}\``,
+                        "Loại: ♾️ Quest tháng",
+                        a.monthlyExpiresAt ? `Hạn: ${rel(a.monthlyExpiresAt)}` : "",
+                        "Lịch: Thứ 3 & Thứ 7",
+                    ]
+                        .filter(Boolean)
+                        .join("\n"),
+                    inline: true,
                 });
             }
-            if (!accounts.length) return interaction.editReply(client.ui.message("auto.quest.status.empty", { user, panel: true }));
-            return interaction.editReply(
-                client.ui.message("auto.quest.status.panel", { user, accounts, total: single.length + monthly.length }),
-            );
+            if (!fields.length)
+                return interaction.editReply({
+                    embeds: [
+                        client.embed("Bạn chưa có account nào.", {
+                            title: "Trạng thái tài khoản",
+                            color: 0xfee75c,
+                        }),
+                    ],
+                });
+            return interaction.editReply({
+                embeds: [
+                    client.embed("", {
+                        title: `Trạng thái tài khoản — ${single.length + monthly.length} account`,
+                        color: 0x5865f2,
+                        fields,
+                        timestamp: true,
+                    }),
+                ],
+            });
         }
 
         const list = await getUserAccountsStatus(client, interaction.user.id);
-        if (!list.length) return interaction.editReply(client.ui.message("auto.quest.status.empty", { user, panel: false }));
-        const accounts = list.slice(0, 25).map((a) => ({
-            accountId: a.accountId,
-            username: a.username,
-            plan: a.type === "monthly" ? "monthly" : "single",
-            planText: planLabel(a.type === "monthly" ? "monthly" : "single"),
-            tokenAlive: !!a.tokenAlive,
-            running: !!a.running,
-            runningQuestCount: a.runningQuestCount ?? null,
-            completedCount: a.completedCount ?? 0,
-            startedAt: a.startedAt ? ms(a.startedAt) || a.startedAt : null,
-            uptime: a.startedAt ? client.funcs.formatUptime(a.startedAt) : "",
-            monthlyExpiresAt: ms(a.monthlyExpiresAt),
-            __text: a.username,
-        }));
-        return interaction.editReply(client.ui.message("auto.quest.status.local", { user, accounts, total: list.length, shown: accounts.length }));
+        if (!list.length) {
+            return interaction.editReply({
+                embeds: [
+                    client.embed("Bạn chưa nhập account nào.", {
+                        title: "Trạng thái tài khoản",
+                        color: 0xfee75c,
+                    }),
+                ],
+            });
+        }
+        const rel = (iso) =>
+            `<t:${Math.floor(new Date(iso).getTime() / 1000)}:R>`;
+        const fields = list.slice(0, 25).map((a) => {
+            const lines = [
+                `ID: \`${a.accountId}\``,
+                `Loại: ${a.type === "monthly" ? "♾️ Quest tháng" : "⚡ Quest lẻ"}`,
+                `Token: ${a.tokenAlive ? "✅ Hoạt động" : "⚠️ Cần nhập lại"}`,
+            ];
+            if (a.type === "monthly" && a.monthlyExpiresAt)
+                lines.push(`Hạn: ${rel(a.monthlyExpiresAt)}`);
+            if (a.running) {
+                lines.push(
+                    `Đang chạy: ${a.runningQuestCount ?? "toàn bộ"} quest | Đã xong: ${a.completedCount}`,
+                );
+                if (a.startedAt)
+                    lines.push(
+                        `Uptime: ${client.funcs.formatUptime(a.startedAt)}`,
+                    );
+            } else if (a.type === "monthly") {
+                lines.push("Trạng thái: ⏳ Chờ lịch (Thứ 3 & Thứ 7)");
+            } else if (!a.tokenAlive) {
+                lines.push("Trạng thái: Tạm dừng — chờ nhập lại token");
+            } else {
+                lines.push("Trạng thái: Không chạy");
+            }
+            return {
+                name: a.username,
+                value: lines.join("\n"),
+                inline: true,
+            };
+        });
+        const note =
+            list.length > 25 ? `Hiển thị 25/${list.length} account.` : "";
+        return interaction.editReply({
+            embeds: [
+                client.embed(note, {
+                    title: `Trạng thái tài khoản — ${list.length} account`,
+                    color: 0x5865f2,
+                    fields,
+                    timestamp: true,
+                }),
+            ],
+        });
     }
 
     // "Nhập token ngay" button sent via DM when token is dead
@@ -243,9 +327,22 @@ async function _handleButton(client, interaction) {
             interaction.user.id,
         );
         if (!refreshRecord || refreshRecord.accountId !== accountId) {
-            return interaction.reply(msg(client, "auto.quest.notWaitingToken", { accountId }));
+            return interaction.reply({
+                ephemeral: true,
+                embeds: [
+                    client.embed(
+                        "Account này không còn ở trạng thái chờ nhập lại token.",
+                        { title: "Không thể nhập lại token" },
+                    ),
+                ],
+            });
         }
-        return interaction.showModal(_buildTokenModal(client, `quest:refresh_modal:${accountId}`, "titleRefresh"));
+        return interaction.showModal(
+            _buildTokenModal(
+                `quest:refresh_modal:${accountId}`,
+                "Nhập lại token Discord",
+            ),
+        );
     }
 
     // "Hủy đơn" button on the payment embed
@@ -253,18 +350,59 @@ async function _handleButton(client, interaction) {
         const paymentId = customId.split(":")[2];
         const payment = await getPaymentById(client, paymentId);
 
-        if (!payment) return interaction.reply(msg(client, "auto.quest.payment.notFound"));
-        if (payment.userId !== interaction.user.id) return interaction.reply(msg(client, "auto.quest.payment.notYours"));
-        if (payment.status !== "pending") return interaction.reply(msg(client, "auto.quest.payment.handled"));
+        if (!payment) {
+            return interaction.reply({
+                ephemeral: true,
+                embeds: [
+                    client.embed("Không tìm thấy đơn thanh toán.", {
+                        title: "Lỗi",
+                    }),
+                ],
+            });
+        }
+        if (payment.userId !== interaction.user.id) {
+            return interaction.reply({
+                ephemeral: true,
+                embeds: [
+                    client.embed("Bạn không thể hủy đơn của người khác.", {
+                        title: "Không có quyền",
+                    }),
+                ],
+            });
+        }
+        if (payment.status !== "pending") {
+            return interaction.reply({
+                ephemeral: true,
+                embeds: [
+                    client.embed("Đơn này đã được xử lý (paid/expired).", {
+                        title: "Không thể hủy",
+                    }),
+                ],
+            });
+        }
 
         await interaction.deferUpdate();
         await cancelPayment(client, paymentId);
         await removeActivationByPaymentId(client, paymentId);
-        await cancelOrderLog(client, payment.userId, payment.accountId, "cancelled");
+        await cancelOrderLog(
+            client,
+            payment.userId,
+            payment.accountId,
+            "🚫 Đã hủy bởi khách / Hết hạn",
+        );
 
-        const buyer = await client.users.fetch(payment.userId).catch(() => null);
-        if (buyer) {
-            await buyer.send(client.ui.message("auto.quest.payment.cancelledDm", { user: client.ui.user(buyer) })).catch(() => null);
+        const user = await client.users.fetch(payment.userId).catch(() => null);
+        if (user) {
+            await user
+                .send({
+                    embeds: [
+                        client.embed("", {
+                            title: "Đã hủy đơn thanh toán",
+                            color: 0xed4245,
+                        }),
+                    ],
+                })
+                .catch(() => null);
         }
         return;
     }
@@ -273,16 +411,45 @@ async function _handleButton(client, interaction) {
     if (customId.startsWith("quest:cancel_monthly:")) {
         const paymentId = customId.split(":")[2];
         const payment = await getMonthlyPaymentById(client, paymentId);
-        if (!payment || payment.status !== "pending") return interaction.reply(msg(client, "auto.quest.monthly.cancelInvalid"));
-        if (payment.userId !== interaction.user.id) return interaction.reply(msg(client, "auto.quest.payment.notYours"));
+        if (!payment || payment.status !== "pending") {
+            return interaction.reply({
+                ephemeral: true,
+                embeds: [
+                    client.embed("Đơn này không tồn tại hoặc đã được xử lý.", {
+                        title: "Không thể hủy",
+                    }),
+                ],
+            });
+        }
+        if (payment.userId !== interaction.user.id) {
+            return interaction.reply({
+                ephemeral: true,
+                embeds: [
+                    client.embed("Bạn không thể hủy đơn của người khác.", {
+                        title: "Không có quyền",
+                    }),
+                ],
+            });
+        }
         await interaction.deferUpdate();
         await cancelMonthlyPayment(client, paymentId);
-        const buyer = await client.users.fetch(payment.userId).catch(() => null);
-        if (buyer) await buyer.send(client.ui.message("auto.quest.monthly.cancelledDm", { user: client.ui.user(buyer) })).catch(() => null);
+        const user = await client.users.fetch(payment.userId).catch(() => null);
+        if (user)
+            await user
+                .send({
+                    embeds: [
+                        client.embed("", {
+                            title: "Đã hủy đơn gia hạn theo tháng",
+                            color: 0xed4245,
+                        }),
+                    ],
+                })
+                .catch(() => null);
         return;
     }
 }
 
+// ── Panel service-type menu ──────────────────────────────────────────────────────
 // ── Select menu handler ────────────────────────────────────────────────────────
 async function _handleSelectMenu(client, interaction) {
     // Per-account quest picker (the only select menu left on the quest flow).
@@ -292,9 +459,17 @@ async function _handleSelectMenu(client, interaction) {
     const selectedQuestIds = interaction.values ?? [];
     const runningEntry = getRunningMap(interaction.user.id).get(accountId);
 
-    if (!runningEntry) return interaction.reply(msg(client, "auto.quest.accountGone", { accountId }));
-
-    const account = accountVars(accountId, runningEntry.username);
+    if (!runningEntry) {
+        return interaction.reply({
+            ephemeral: true,
+            embeds: [
+                client.embed(
+                    "Account này không còn chạy hoặc không thuộc về bạn.",
+                    { title: "Không tìm thấy account" },
+                ),
+            ],
+        });
+    }
 
     // Owner/dev: unlock the selected quests immediately, no payment.
     if (_isStaffFree(client, interaction.user.id)) {
@@ -332,7 +507,22 @@ async function _handleSelectMenu(client, interaction) {
             runningEntry.username,
             selectedQuestIds,
         );
-        return interaction.editReply(client.ui.message("auto.quest.staffFree", { count: selectedQuestIds.length, account }, { edit: true }));
+        return interaction.editReply({
+            embeds: [
+                client.embed(
+                    `Đã mở chạy **${selectedQuestIds.length}** quest đã chọn (miễn phí — Staff).`,
+                    {
+                        title: "Đã kích hoạt miễn phí",
+                        color: 0x57f287,
+                        footer: {
+                            text: "Bot bắt đầu chạy quest. Dùng /status để theo dõi.",
+                        },
+                        timestamp: true,
+                    },
+                ),
+            ],
+            components: [],
+        });
     }
 
     // Check if user already has a pending payment for this account
@@ -342,7 +532,19 @@ async function _handleSelectMenu(client, interaction) {
         accountId,
     );
     if (existed) {
-        return interaction.update(questPaymentMessage(client, existed, "existed", { username: runningEntry.username, edit: true }));
+        return interaction.update({
+            embeds: [
+                buildPaymentEmbed(
+                    client,
+                    existed,
+                    "Bạn đã có đơn chờ thanh toán. Thanh toán đơn hiện tại hoặc chờ hết hạn để tạo đơn mới.",
+                ),
+            ],
+            components:
+                existed.status === "pending"
+                    ? [buildPaymentActionRow(existed.id)]
+                    : [],
+        });
     }
 
     // Create new payment and register with AutoBank
@@ -371,7 +573,16 @@ async function _handleSelectMenu(client, interaction) {
         selectedQuestIds,
     });
 
-    return interaction.update(questPaymentMessage(client, payment, "created", { username: runningEntry.username, edit: true }));
+    return interaction.update({
+        embeds: [
+            buildPaymentEmbed(
+                client,
+                payment,
+                `Đã tạo QR cho ${selectedQuestIds.length} quest. Thanh toán xong bot tự chạy quest.`,
+            ),
+        ],
+        components: [buildPaymentActionRow(payment.id)],
+    });
 }
 
 // ── Modal handler ──────────────────────────────────────────────────────────────
@@ -381,8 +592,6 @@ async function _handleModal(client, interaction) {
         return _handleMonthlyModal(client, interaction);
     }
 
-    const failed = (reason) => interaction.editReply(client.ui.message("auto.quest.activateFailed", { reason }));
-
     // New token submission
     if (interaction.customId === "quest:token_modal") {
         const token = client.funcs.normalizeDiscordTokenInput(
@@ -391,7 +600,15 @@ async function _handleModal(client, interaction) {
         await interaction.deferReply({ ephemeral: true });
 
         const resolved = await resolveDiscordAccount(token);
-        if (!resolved.ok) return failed(resolved.reason);
+        if (!resolved.ok) {
+            return interaction.editReply({
+                embeds: [
+                    client.embed(resolved.reason, {
+                        title: "Kích hoạt thất bại",
+                    }),
+                ],
+            });
+        }
 
         // Account already running → let the user pick MORE quests and add them to
         // the current run (paid quests are appended, not replaced) — no need to wait
@@ -412,7 +629,15 @@ async function _handleModal(client, interaction) {
             autoRemoveIfInactive: true,
         });
 
-        if (!result.ok) return failed(result.reason);
+        if (!result.ok) {
+            return interaction.editReply({
+                embeds: [
+                    client.embed(result.reason, {
+                        title: "Kích hoạt thất bại",
+                    }),
+                ],
+            });
+        }
 
         return _replyWithQuestSelection(client, interaction, result);
     }
@@ -430,7 +655,6 @@ async function _handleModal(client, interaction) {
         await interaction.deferReply({ ephemeral: true });
 
         const userId = interaction.user.id;
-        const user = client.ui.user(interaction.user);
         const refreshRecord = await getTokenRefreshRecord(client, userId);
         const preFlagged =
             !wildcard && refreshRecord?.accountId === modalTarget;
@@ -440,19 +664,47 @@ async function _handleModal(client, interaction) {
         // way.
         const refreshable = await _refreshableAccounts(client, userId);
         if (!wildcard && !preFlagged && !refreshable.has(modalTarget)) {
-            return interaction.editReply(client.ui.message("auto.quest.notWaitingToken", { accountId: modalTarget }));
+            return interaction.editReply({
+                embeds: [
+                    client.embed(
+                        "Account này không còn ở trạng thái chờ nhập lại token.",
+                        { title: "Không thể nhập lại token" },
+                    ),
+                ],
+            });
         }
 
         const resolved = await resolveDiscordAccount(token);
-        if (!resolved.ok) return failed(resolved.reason);
+        if (!resolved.ok) {
+            return interaction.editReply({
+                embeds: [
+                    client.embed(resolved.reason, {
+                        title: "Kích hoạt thất bại",
+                    }),
+                ],
+            });
+        }
         if (!wildcard && resolved.accountId !== modalTarget) {
-            return interaction.editReply(client.ui.message("auto.quest.wrongAccount", { accountId: modalTarget }));
+            return interaction.editReply({
+                embeds: [
+                    client.embed(
+                        `Bạn chỉ được nhập lại token của account \`${modalTarget}\`.`,
+                        { title: "Sai account" },
+                    ),
+                ],
+            });
         }
         const accountId = resolved.accountId;
-        const account = accountVars(accountId, resolved.username);
         const flagged = refreshRecord?.accountId === accountId;
         if (!flagged && !refreshable.has(accountId)) {
-            return interaction.editReply(client.ui.message("auto.quest.noOrderWaiting", { accountId }));
+            return interaction.editReply({
+                embeds: [
+                    client.embed(
+                        `Account \`${accountId}\` không có đơn quest nào đang chờ token. Nếu chưa mua, bấm **Quest lẻ** hoặc **Quest tháng**.`,
+                        { title: "Không thể nhập lại token" },
+                    ),
+                ],
+            });
         }
 
         // ── Monthly subscribers ──────────────────────────────────────────────
@@ -481,7 +733,13 @@ async function _handleModal(client, interaction) {
                         ref: userId,
                     });
                 } catch (e) {
-                    return failed(e.message);
+                    return interaction.editReply({
+                        embeds: [
+                            client.embed(e.message, {
+                                title: "Kích hoạt thất bại",
+                            }),
+                        ],
+                    });
                 }
             }
         }
@@ -501,7 +759,18 @@ async function _handleModal(client, interaction) {
                 username: resolved.username,
                 months: 0,
             }).catch(() => {});
-            return interaction.editReply(client.ui.message("auto.quest.monthlyTokenUpdated", { account, user }));
+            return interaction.editReply({
+                embeds: [
+                    client.embed(
+                        "Đã cập nhật token mới cho gói tháng (không mất phí). Bot sẽ tiếp tục chạy quest theo lịch.",
+                        {
+                            title: "Token đã được cập nhật (gói tháng)",
+                            color: 0x57f287,
+                            timestamp: true,
+                        },
+                    ),
+                ],
+            });
         }
 
         // ── Panel-run single order ───────────────────────────────────────────
@@ -519,14 +788,49 @@ async function _handleModal(client, interaction) {
                     ref: userId,
                 });
             } catch (e) {
-                return failed(e.message);
+                return interaction.editReply({
+                    embeds: [
+                        client.embed(e.message, { title: "Kích hoạt thất bại" }),
+                    ],
+                });
             }
-            return interaction.editReply(client.ui.message("auto.quest.tokenUpdatedPanel", { account, user }));
+            return interaction.editReply({
+                embeds: [
+                    client.embed(
+                        "Bot đang chạy tiếp các quest đã mua của account này.",
+                        {
+                            title: "Token đã được cập nhật",
+                            color: 0x57f287,
+                            fields: [
+                                {
+                                    name: "Tài khoản",
+                                    value: resolved.username,
+                                    inline: true,
+                                },
+                                {
+                                    name: "ID",
+                                    value: `\`${accountId}\``,
+                                    inline: true,
+                                },
+                            ],
+                            timestamp: true,
+                        },
+                    ),
+                ],
+            });
         }
 
         // Past the branches above, only a flagged local order can be revived
         // (a plan that expired between the two lookups above lands here).
-        if (!refreshRecord) return interaction.editReply(client.ui.message("auto.quest.noOrderFound", { accountId }));
+        if (!refreshRecord)
+            return interaction.editReply({
+                embeds: [
+                    client.embed(
+                        "Không tìm thấy đơn quest nào đang chờ token cho account này.",
+                        { title: "Không thể nhập lại token" },
+                    ),
+                ],
+            });
 
         const result = await startAccount(client, userId, token, {
             resolvedAccount: resolved,
@@ -539,7 +843,15 @@ async function _handleModal(client, interaction) {
             requireQuestSelection: true, // keeps stored quest selection
         });
 
-        if (!result.ok) return failed(result.reason);
+        if (!result.ok) {
+            return interaction.editReply({
+                embeds: [
+                    client.embed(result.reason, {
+                        title: "Kích hoạt thất bại",
+                    }),
+                ],
+            });
+        }
 
         // Restore stored quest selection so the run loop resumes immediately
         const {
@@ -560,13 +872,31 @@ async function _handleModal(client, interaction) {
             );
         }
 
-        return interaction.editReply(
-            client.ui.message("auto.quest.tokenUpdated", {
-                account: accountVars(result.accountId, result.username),
-                user,
-                resumed: storedIds.length > 0,
-            }),
-        );
+        return interaction.editReply({
+            embeds: [
+                client.embed("", {
+                    title: "Token đã được cập nhật",
+                    color: 0x57f287,
+                    fields: [
+                        {
+                            name: "Tài khoản",
+                            value: result.username,
+                            inline: true,
+                        },
+                        {
+                            name: "ID",
+                            value: `\`${result.accountId}\``,
+                            inline: true,
+                        },
+                    ],
+                    description:
+                        storedIds.length > 0
+                            ? "Bot đang tiếp tục chạy các quest đã chọn trước đó."
+                            : "Token đã được cập nhật. Hãy chọn lại quest để tiếp tục.",
+                    timestamp: true,
+                }),
+            ],
+        });
     }
 }
 
@@ -577,16 +907,29 @@ async function _handleMonthlyModal(client, interaction) {
     );
     await interaction.deferReply({ ephemeral: true });
 
-    const reply = (key, vars = {}, opts = {}) => interaction.editReply(client.ui.message(key, vars, opts));
     const resolved = await resolveDiscordAccount(token);
-    if (!resolved.ok) return reply("auto.quest.activateFailed", { reason: resolved.reason });
+    if (!resolved.ok) {
+        return interaction.editReply({
+            embeds: [
+                client.embed(resolved.reason, { title: "Kích hoạt thất bại" }),
+            ],
+        });
+    }
     const userId = interaction.user.id;
     const accountId = resolved.accountId;
-    const vars = { account: accountVars(accountId, resolved.username), user: client.ui.user(interaction.user) };
+    const tsOf = (iso) => Math.floor(new Date(iso).getTime() / 1000);
 
     // Account ownership guard
     const ownerId = await getStoredAccountOwner(client, accountId);
-    if (ownerId && ownerId !== userId) return reply("auto.quest.monthly.ownedByOther", vars);
+    if (ownerId && ownerId !== userId) {
+        return interaction.editReply({
+            embeds: [
+                client.embed("Discord account này đã được gán cho user khác.", {
+                    title: "Không thể đăng ký",
+                }),
+            ],
+        });
+    }
 
     // ── Panel-delegated monthly (execution runs on the panel) ─────────────────────
     if (PanelQuest.isEnabled()) {
@@ -599,7 +942,18 @@ async function _handleMonthlyModal(client, interaction) {
             await PanelQuest.activateMonthly({ token, months: 0, ref: userId }).catch(
                 () => {},
             );
-            return reply("auto.quest.monthly.tokenRefreshed", { ...vars, expiresAt: ms(activePanel.monthlyExpiresAt) });
+            return interaction.editReply({
+                embeds: [
+                    client.embed(
+                        [
+                            `Account: **${resolved.username}** (\`${accountId}\`)`,
+                            `Gói còn hạn tới: <t:${tsOf(activePanel.monthlyExpiresAt)}:f>`,
+                            "Đã cập nhật token mới cho gói hiện tại (không mất phí).",
+                        ].join("\n"),
+                        { title: "Đã cập nhật token gói tháng", color: 0x57f287, timestamp: true },
+                    ),
+                ],
+            });
         }
         // Owner/dev → activate 1 month free on the panel.
         if (_isStaffFree(client, userId)) {
@@ -609,9 +963,22 @@ async function _handleMonthlyModal(client, interaction) {
                     months: 1,
                     ref: userId,
                 });
-                return reply("auto.quest.monthly.staffFree", { ...vars, expiresAt: ms(r.monthlyExpiresAt) });
+                return interaction.editReply({
+                    embeds: [
+                        client.embed(
+                            [
+                                `Account: **${resolved.username}** (\`${accountId}\`)`,
+                                `Hạn tới: <t:${tsOf(r.monthlyExpiresAt)}:f>`,
+                                "Đã kích hoạt gói tháng miễn phí (Staff). Bot chạy toàn bộ quest vào Thứ 3 & Thứ 7.",
+                            ].join("\n"),
+                            { title: "Đã kích hoạt gói tháng (miễn phí)", color: 0x57f287, timestamp: true },
+                        ),
+                    ],
+                });
             } catch (e) {
-                return reply("auto.quest.activateFailed", { reason: e.message });
+                return interaction.editReply({
+                    embeds: [client.embed(e.message, { title: "Kích hoạt thất bại" })],
+                });
             }
         }
         // Non-staff → fall through to the payment flow below; on payment,
@@ -630,7 +997,22 @@ async function _handleMonthlyModal(client, interaction) {
             username: resolved.username,
             months: 0,
         });
-        return reply("auto.quest.monthly.tokenRefreshed", { ...vars, expiresAt: ms(activeUntil) });
+        return interaction.editReply({
+            embeds: [
+                client.embed(
+                    [
+                        `Account: **${resolved.username}** (\`${accountId}\`)`,
+                        `Gói còn hạn tới: <t:${tsOf(activeUntil)}:f>`,
+                        "Đã cập nhật token mới cho gói hiện tại (không mất phí).",
+                    ].join("\n"),
+                    {
+                        title: "Đã cập nhật token gói tháng",
+                        color: 0x57f287,
+                        timestamp: true,
+                    },
+                ),
+            ],
+        });
     }
 
     // Owner/dev → activate 1 month free.
@@ -642,26 +1024,47 @@ async function _handleMonthlyModal(client, interaction) {
             username: resolved.username,
             months: 1,
         });
-        return reply("auto.quest.monthly.staffFree", { ...vars, expiresAt: ms(result.monthlyExpiresAt) });
+        return interaction.editReply({
+            embeds: [
+                client.embed(
+                    [
+                        `Account: **${resolved.username}** (\`${accountId}\`)`,
+                        `Hạn tới: <t:${tsOf(result.monthlyExpiresAt)}:f>`,
+                        "Đã kích hoạt gói tháng miễn phí (Staff). Bot chạy toàn bộ quest vào Thứ 3 & Thứ 7.",
+                    ].join("\n"),
+                    {
+                        title: "Đã kích hoạt gói tháng (miễn phí)",
+                        color: 0x57f287,
+                        timestamp: true,
+                    },
+                ),
+            ],
+        });
     }
 
     // Existing pending monthly payment → show it again.
     const existed = await getOpenMonthlyPayment(client, userId, accountId);
     if (existed) {
-        return interaction.editReply(
-            monthlyPaymentMessage(
-                client,
-                {
-                    paymentId: existed.paymentId,
-                    months: existed.months,
-                    amount: existed.amount,
-                    transferCode: existed.transferCode,
-                    qrUrl: buildVietQrUrl(client, existed.amount, existed.transferCode),
-                },
-                "existed",
-                { accountId, username: resolved.username },
-            ),
-        );
+        return interaction.editReply({
+            embeds: [
+                buildMonthlyPaymentEmbed(
+                    client,
+                    {
+                        paymentId: existed.paymentId,
+                        months: existed.months,
+                        amount: existed.amount,
+                        transferCode: existed.transferCode,
+                        qrUrl: buildVietQrUrl(
+                            client,
+                            existed.amount,
+                            existed.transferCode,
+                        ),
+                    },
+                    "Bạn đã có đơn chờ thanh toán. Thanh toán hoặc chờ hết hạn để tạo đơn mới.",
+                ),
+            ],
+            components: [buildMonthlyCancelRow(existed.paymentId)],
+        });
     }
 
     // Create a new monthly payment (1 month; buy again to stack more).
@@ -672,22 +1075,29 @@ async function _handleMonthlyModal(client, interaction) {
         username: resolved.username,
         months: 1,
     });
-    return interaction.editReply(monthlyPaymentMessage(client, payment, "created", { accountId, username: resolved.username }));
+    return interaction.editReply({
+        embeds: [
+            buildMonthlyPaymentEmbed(
+                client,
+                payment,
+                `Đã tạo QR gói **${payment.months}** tháng cho account **${resolved.username}**. Thanh toán xong bot tự kích hoạt.`,
+            ),
+        ],
+        components: [buildMonthlyCancelRow(payment.paymentId)],
+    });
 }
 
 // ── UI helpers ─────────────────────────────────────────────────────────────────
-/** The token form (template auto.quest.tokenModal); `titleSlot` = titleNew | titleRefresh | titleMonthly. */
-function _buildTokenModal(client, customId, titleSlot) {
-    const card = client.ui.card("auto.quest.tokenModal");
+function _buildTokenModal(customId, title) {
     return new ModalBuilder()
         .setCustomId(customId)
-        .setTitle((card.text(titleSlot) || "Discord token").slice(0, 45))
+        .setTitle(title)
         .addComponents(
             new ActionRowBuilder().addComponents(
                 new TextInputBuilder()
                     .setCustomId("token")
-                    .setLabel((card.text("label") || "Discord token").slice(0, 45))
-                    .setPlaceholder((card.text("placeholder") || "").slice(0, 100) || " ")
+                    .setLabel("Discord token")
+                    .setPlaceholder("Dán token vào đây")
                     .setStyle(TextInputStyle.Paragraph)
                     .setRequired(true),
             ),
@@ -699,31 +1109,62 @@ async function _replyWithQuestSelection(client, interaction, result) {
         interaction.user.id,
         result.accountId,
     );
-    const shown = quests.slice(0, 25).map((q) => ({ id: String(q.id), name: q.name, taskType: q.taskType || "", __text: q.name }));
-    const vars = {
-        account: accountVars(result.accountId, result.username),
-        quests: shown,
-        hasQuests: quests.length > 0,
-        user: client.ui.user(interaction.user),
-    };
 
-    if (!quests.length) return interaction.editReply(client.ui.message("auto.quest.activated", vars));
+    const successEmbed = client.embed("", {
+        title: "Kích hoạt thành công",
+        color: 0x57f287,
+        fields: [
+            { name: "Tài khoản", value: result.username, inline: true },
+            { name: "ID", value: `\`${result.accountId}\``, inline: true },
+        ],
+        footer: {
+            text: "Bot đã bắt đầu chạy quest. Dùng /status để theo dõi.",
+        },
+        timestamp: true,
+    });
+
+    if (!quests.length) {
+        return interaction.editReply({
+            embeds: [
+                successEmbed,
+                client.embed(
+                    "Hiện chưa có quest phù hợp. Khi có quest mới, bấm Nhập token để chọn lại.",
+                    {
+                        title: "Chưa có quest để chọn",
+                        color: 0xfee75c,
+                    },
+                ),
+            ],
+        });
+    }
 
     const entry = getRunningMap(interaction.user.id).get(result.accountId);
     if (entry) entry.selectionShown = true;
 
-    const sel = client.ui.select("auto.quest.activated", vars);
     const menu = new StringSelectMenuBuilder()
         .setCustomId(`quest:select:${result.accountId}`)
-        .setPlaceholder(sel.placeholder("pick"))
+        .setPlaceholder("Chọn quest muốn chạy (có thể chọn nhiều)")
         .setMinValues(1)
         .setMaxValues(Math.min(quests.length, 25))
         .addOptions(
-            shown.map((q) => {
-                const o = sel.option("pick", q);
-                return { label: o.label.slice(0, 100), value: q.id, ...(o.description ? { description: o.description } : {}) };
-            }),
+            quests.slice(0, 25).map((q) => ({
+                label: q.name.slice(0, 100),
+                value: String(q.id),
+                description: q.taskType || undefined,
+            })),
         );
 
-    return interaction.editReply(client.ui.message("auto.quest.activated", vars, { components: [new ActionRowBuilder().addComponents(menu)] }));
+    return interaction.editReply({
+        embeds: [
+            successEmbed,
+            client.embed(
+                "Chọn một hoặc nhiều quest bên dưới. Bot chỉ chạy các quest bạn chọn.",
+                {
+                    title: "Chọn quest để chạy",
+                    color: 0x5865f2,
+                },
+            ),
+        ],
+        components: [new ActionRowBuilder().addComponents(menu)],
+    });
 }

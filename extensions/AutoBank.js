@@ -247,27 +247,64 @@ class AutoBank {
         }
     }
 
-    /** Admin webhook log of a payment (template auto.bank.log). */
     async _sendLog(status, entry) {
         if (!this.logWebhookUrl) return;
 
-        const { content, embeds } = this.client.ui.message("auto.bank.log", {
-            status,
-            entry: {
-                handler: entry.context?._handler ?? "",
-                userId: entry.context?.userId ?? null,
-                customId: entry.customId ?? "",
-                amount: entry.amount ?? 0,
-                message: entry.message ? String(entry.message) : "",
-                __text: entry.customId ?? "",
-            },
-        });
+        const colors = {
+            PAID: 0x57f287,
+            EXPIRED: 0xed4245,
+            PAID_MISSED: 0xfee75c,
+            EXPIRED_MISSED: 0xeb459e,
+        };
+        const labels = {
+            PAID: "✅ Payment Received",
+            EXPIRED: "❌ Payment Expired",
+            PAID_MISSED: "⚠️ Missed Payment (Recovered)",
+            EXPIRED_MISSED: "⏰ Missed Expiry (Recovered)",
+        };
+
+        const embed = {
+            title: labels[status] || status,
+            color: colors[status] || 0x99aab5,
+            fields: [
+                {
+                    name: "type handle",
+                    value: `\`${entry.context?._handler}\``,
+                    inline: true,
+                },
+                {
+                    name: "user",
+                    value: `<@${entry.context?.userId}> \`${entry.context?.userId}\``,
+                },
+                {
+                    name: "Custom ID",
+                    value: `\`${entry.customId}\``,
+                    inline: true,
+                },
+                {
+                    name: "Amount",
+                    value: `${Number(entry.amount).toLocaleString()} VND`,
+                    inline: true,
+                },
+                { name: "Status", value: status, inline: true },
+            ],
+            timestamp: new Date().toISOString(),
+            footer: { text: "AutoBank" },
+        };
+
+        if (entry.message) {
+            embed.fields.push({
+                name: "Webhook Message",
+                value: String(entry.message).slice(0, 1024),
+                inline: false,
+            });
+        }
 
         try {
             await fetch(this.logWebhookUrl, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ content, embeds }),
+                body: JSON.stringify({ embeds: [embed] }),
             });
         } catch (err) {
             console.error("[AutoBank] Failed to send log:", err.message);

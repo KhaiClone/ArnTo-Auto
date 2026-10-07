@@ -133,19 +133,6 @@ module.exports = {
             },
         );
 
-        // Register recovery handler for Robux payments
-        client.autoBank.registerMissedHandler(
-            "rb_payment",
-            async (client, entry) => {
-                const {
-                    markRobuxPaymentPaid,
-                    handleRobuxPaid,
-                } = require("../../../extensions/AutoRobux");
-                await markRobuxPaymentPaid(client, entry.context.paymentId);
-                await handleRobuxPaid(client, entry.context);
-            },
-        );
-
         // Register recovery handler for Deco Gift payments
         client.autoBank.registerMissedHandler(
             "dg_payment",
@@ -346,16 +333,6 @@ module.exports = {
             },
         );
 
-        // ── Init Robux queue message ───────────────────────────────────────────
-        try {
-            const {
-                updateQueueMessage,
-            } = require("../../../extensions/AutoRobux");
-            await updateQueueMessage(client);
-        } catch (e) {
-            console.warn("[ready] updateQueueMessage error:", e.message);
-        }
-
         // ── Restore stored accounts (resume quest runs after restart) ──────────
         // Runs before the maintenance sweep so restored accounts are in the
         // running map and are never mistaken for stale/idle entries.
@@ -456,38 +433,6 @@ module.exports = {
                         await runOrder(client, entry.context);
                     }
 
-                    // ── AutoRobux ──────────────────────────────────────────────
-                } else if (handler === "rb_payment") {
-                    const {
-                        markRobuxPaymentPaid,
-                        handleRobuxPaid,
-                    } = require("../../../extensions/AutoRobux");
-                    const paid = await markRobuxPaymentPaid(client, paymentId);
-                    if (paid) {
-                        const user = await client.users
-                            .fetch(userId)
-                            .catch(() => null);
-                        if (user)
-                            await user
-                                .send({
-                                    embeds: [
-                                        client.embed(
-                                            [
-                                                `Mã đơn: \`${paymentId}\``,
-                                                `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
-                                                "Bot phát hiện thanh toán khi khởi động lại. Admin sẽ xử lý đơn sớm nhất.",
-                                            ].join("\n"),
-                                            {
-                                                title: "Đã xác nhận thanh toán (khôi phục)",
-                                                color: 0x57f287,
-                                            },
-                                        ),
-                                    ],
-                                })
-                                .catch(() => null);
-                        await handleRobuxPaid(client, entry.context);
-                    }
-
                     // ── AutoDecoGift ───────────────────────────────────────────
                     // The shop's bill DM tells the buyer; handlePaid DMs only if it could not.
                 } else if (handler === "dg_payment") {
@@ -570,26 +515,6 @@ module.exports = {
                         if (pm) await badgeLog.updateOrderLog(client, pm, "expired");
                     }
 
-                    // ── AutoRobux ──────────────────────────────────────────────
-                } else if (handler === "rb_payment") {
-                    await user
-                        .send({
-                            embeds: [
-                                client.embed(
-                                    [
-                                        `Mã đơn: \`${paymentId}\``,
-                                        `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
-                                        "QR Robux đã hết hạn. Hãy tạo đơn mới.",
-                                    ].join("\n"),
-                                    {
-                                        title: "QR thanh toán đã hết hạn",
-                                        color: 0xfee75c,
-                                    },
-                                ),
-                            ],
-                        })
-                        .catch(() => null);
-
                     // ── AutoDecoGift ───────────────────────────────────────────
                 } else if (handler === "dg_payment") {
                     await user
@@ -670,14 +595,6 @@ module.exports = {
                 await expireStalePayments(client);
             } catch (e) {
                 console.warn("[maintenance] quest payments:", e.message);
-            }
-            try {
-                const {
-                    expireStaleRobuxPayments,
-                } = require("../../../extensions/AutoRobux");
-                await expireStaleRobuxPayments(client);
-            } catch (e) {
-                console.warn("[maintenance] robux payments:", e.message);
             }
             try {
                 // Expired QRs, old carts, and order steps that failed on their own

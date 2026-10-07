@@ -43,8 +43,6 @@ module.exports = {
     // Channel every finished-quest notice is posted to (the buyer is mentioned in
     // it). Empty = fall back to DMing the buyer, the way it worked before.
     questNotifyChannelId: process.env.QUEST_NOTIFY_CHANNEL_ID || "",
-    robuxOrderLogChannelId: process.env.ROBUX_ORDER_LOG_CHANNEL_ID || "",
-    robuxQueueChannelId: process.env.ROBUX_QUEUE_CHANNEL_ID || "",
     badgeOrderLogChannelId: process.env.BADGE_ORDER_LOG_CHANNEL_ID || "",
 
     // ── Auto Deco Gift (extensions/AutoDecoGift.js) ────────────────────────────

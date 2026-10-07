@@ -555,7 +555,7 @@ async function _handleSelectMenu(client, interaction) {
     });
 
     // Create the order log immediately at QR creation ("⏳ Chờ thanh toán"),
-    // consistent with AutoBadge/Robux. It is edited to paid/cancelled later.
+    // consistent with AutoBadge. It is edited to paid/cancelled later.
     await sendOrderLog(
         client,
         interaction.user.id,

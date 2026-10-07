@@ -3,7 +3,7 @@
  * Auto Deco Gift — buyers pick decors on a Discord panel (/dg-setup), pay by QR,
  * an admin hands over the gift links.
  *  - Catalog / cart / views (Components V2, every view ephemeral)
- *  - Payment (AutoBank, like AutoRobux)
+ *  - Payment (AutoBank, like AutoBadge)
  *  - Orders: the shop's order through the bot-panel, the staff-channel message,
  *    approve (links → ArnTo-assistant DMs them) / cancel, retries
  *

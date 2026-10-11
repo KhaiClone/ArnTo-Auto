@@ -722,29 +722,108 @@ async function handlePaid(client, paymentId, bankMessage) {
             updatedAt: Date.now(),
         }));
         await removePayment(client, paymentId);
-
-        const order = await _ensureShopOrder(client, paymentId);
-        await refreshStaff(client, order);
-        if (!order.shopOrderId) {
-            // The shop's bill DM did not go out — tell the buyer the money is in.
-            const user = await client.users.fetch(order.userId).catch(() => null);
-            await user
-                ?.send({
-                    embeds: [
-                        client.embed(
-                            [
-                                `Mã thanh toán: \`${order.id}\``,
-                                `Số tiền: **${money(order.total)}**`,
-                                "✅ Đã nhận thanh toán Deco Gift. Admin sẽ duyệt và gửi link quà qua tin nhắn riêng.",
-                            ].join("\n"),
-                            { title: "Đã xác nhận thanh toán", color: 0x57f287 },
-                        ),
-                    ],
-                })
-                .catch(() => null);
-        }
-        return order;
+        return _open(client, paymentId);
     });
+}
+
+/** A paid order just recorded: the shop's order, the staff card, and word to the buyer. */
+async function _open(client, id) {
+    const order = await _ensureShopOrder(client, id);
+    await refreshStaff(client, order);
+    if (!order.shopOrderId) {
+        // The shop's bill DM did not go out — tell the buyer the money is in.
+        const user = await client.users.fetch(order.userId).catch(() => null);
+        await user
+            ?.send({
+                embeds: [
+                    client.embed(
+                        [
+                            `Mã thanh toán: \`${order.id}\``,
+                            `Số tiền: **${money(order.total)}**`,
+                            "✅ Đã nhận thanh toán Deco Gift. Admin sẽ duyệt và gửi link quà qua tin nhắn riêng.",
+                        ].join("\n"),
+                        { title: "Đã xác nhận thanh toán", color: 0x57f287 },
+                    ),
+                ],
+            })
+            .catch(() => null);
+    }
+    return order;
+}
+
+const MANUAL_ID = /^DGP-[a-z0-9]{8,20}$/;
+const SNOWFLAKE = /^\d{17,20}$/;
+
+/** What the panel gets back about a hand-made order. */
+function _manualResult(client, o, existed) {
+    const guildId = o.staffChannelId ? client.channels.cache.get(o.staffChannelId)?.guildId : null;
+    return {
+        id: o.id,
+        existed,
+        status: o.status,
+        shopOrderId: o.shopOrderId || null,
+        waitingUrl: o.waitingUrl || null,
+        shopError: o.shopOrderId ? null : o.shopError || null,
+        staffUrl: guildId && o.staffMessageId ? `https://discord.com/channels/${guildId}/${o.staffChannelId}/${o.staffMessageId}` : null,
+    };
+}
+
+/**
+ * An order made on the bot-panel for a buyer who paid in a ticket (bus
+ * "decor.gift.create"): no QR, otherwise the same as a paid one — the shop's
+ * order, the staff card, an admin approves with the links. The panel prices the
+ * items from the Gift catalog and picks the id, so a repeat returns the first.
+ * → { id, existed, status, shopOrderId, waitingUrl, shopError, staffUrl }
+ */
+async function createByHand(client, { id, buyerId, items, total, note, by } = {}) {
+    if (!MANUAL_ID.test(String(id || ""))) throw new Error("id is required (DGP-…)");
+    if (!SNOWFLAKE.test(String(buyerId || ""))) throw new Error("buyerId is required");
+    if (!Array.isArray(items) || !items.length || items.length > MAX_ITEMS) throw new Error(`1 to ${MAX_ITEMS} decors per order`);
+    const clean = items.map((i, n) => {
+        const name = trunc(String(i?.name || "").trim(), 100);
+        if (!name || !(Number(i.price) > 0)) throw new Error(`items[${n}] needs a name and a price`);
+        return {
+            sku_id: String(i.sku_id || ""),
+            name,
+            type: Number.isFinite(i.type) ? i.type : null,
+            typeLabel: trunc(String(i.typeLabel || "Decor"), 30),
+            price: Number(i.price),
+            thumb: i.thumb || null,
+            image: i.image || null,
+        };
+    });
+    const sum = clean.reduce((s, i) => s + i.price, 0);
+    if (Number(total) !== sum) throw new Error("total does not match the items");
+    if (!settings(client).decoGiftStaffChannelId) throw new Error("DECO_GIFT_STAFF_CHANNEL_ID is not set on ArnTo-Auto");
+    const byName = trunc(String(by?.name || "").trim(), 80) || "panel";
+    const byId = SNOWFLAKE.test(String(by?.discordId || "")) ? String(by.discordId) : null;
+
+    const res = await _withLock(id, async () => {
+        const known = await getOrder(client, id);
+        if (known) return _manualResult(client, known, true);
+        await _serial(() => client.db.create(ORDER_DB, {
+            id,
+            userId: String(buyerId),
+            items: clean,
+            total: sum,
+            transferCode: null,
+            bankMessage: null,
+            manual: { by: byName, byId, note: trunc(String(note || "").trim(), 300) || null },
+            paidAt: Date.now(),
+            status: "paid",
+            shopOrderId: null,
+            waitingUrl: null,
+            shopError: null,
+            tries: 0,
+            links: null,
+            updatedAt: Date.now(),
+        }));
+        await _open(client, id);
+        // Read back: the staff card's ids were written after _open's copy was taken.
+        return _manualResult(client, await getOrder(client, id), false);
+    });
+    if (!res) throw new Error("this order is being created already — try again in a few seconds");
+    return res;
 }
 
 /** The shop's order for this payment (the panel makes it idempotent). */
@@ -991,13 +1070,22 @@ function _staffButtons(o) {
 
 function staffView(client, o) {
     const c = new ContainerBuilder().setAccentColor(STATUS_COLOR[o.status] ?? accent(client));
+    const m = o.manual;
     c.addTextDisplayComponents(
         text(
             [
                 "## 🎁 Đơn Deco Gift",
-                `**Mã đơn:** ${o.shopOrderId ? `\`${o.shopOrderId}\`${o.waitingUrl ? ` · [hàng chờ](${o.waitingUrl})` : ""}` : "*chưa có*"} · thanh toán \`${o.id}\``,
+                `**Mã đơn:** ${o.shopOrderId ? `\`${o.shopOrderId}\`${o.waitingUrl ? ` · [hàng chờ](${o.waitingUrl})` : ""}` : "*chưa có*"} · ${m ? "mã" : "thanh toán"} \`${o.id}\``,
                 `**Khách:** <@${o.userId}> (\`${o.userId}\`)`,
-                `**Tổng:** ${money(o.total)} · đã thanh toán lúc ${ts(o.paidAt)}`,
+                m
+                    ? `**Tổng:** ${money(o.total)} · 🧾 **tạo trên panel** bởi ${m.byId ? `<@${m.byId}>` : `**${m.by}**`} lúc ${ts(o.paidAt)}`
+                    : `**Tổng:** ${money(o.total)} · đã thanh toán lúc ${ts(o.paidAt)}`,
+                ...(m
+                    ? [
+                          ...(m.note ? [`**Ghi chú:** ${m.note}`] : []),
+                          "-# Khách thanh toán qua ticket, không qua QR — kiểm tra đã nhận tiền trước khi duyệt.",
+                      ]
+                    : []),
             ].join("\n"),
         ),
     );
@@ -1116,6 +1204,7 @@ module.exports = {
     paymentCancelRow,
     handlePaid,
     // orders
+    createByHand,
     getOrder,
     approve,
     cancelOrder,

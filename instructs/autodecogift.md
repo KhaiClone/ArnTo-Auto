@@ -61,6 +61,18 @@ tiền, **tin ngân hàng** (AutoBank chỉ khớp nội dung CK, không kiểm 
 - **Thử lại**: bước nào lỗi (tạo đơn Shop, giao link, hoàn thành, hủy) thì vòng quét 5
   phút tự thử lại tối đa 24 lần; nút này chạy lại ngay.
 
+## Tạo đơn trên panel (khách trả qua ticket)
+
+Khách không biết dùng panel thì thanh toán trong ticket, admin tạo đơn thay ở trang
+**Orders** của bot-panel → **New Deco Gift order**: chọn deco (tối đa 5), ID Discord
+của khách, ghi chú (vd. số ticket). Giá luôn là giá Gift hiện tại, không sửa được.
+
+Panel gửi lệnh `decor.gift.create` qua kênh bus cho Auto → Auto ghi đơn vào
+`dg_orders` (mã `DGP-…`, có `manual: { by, byId, note }`), Shop mở đơn `arnto_N`
+(source `decoGift`, tính chung với đơn Auto), kênh staff nhận tin đơn ghi **tạo trên
+panel** — từ đó duyệt / hủy / thử lại y như đơn trả bằng QR. Tạo lại cùng một form
+(panel gửi lại sau khi hết giờ chờ) không tạo đơn thứ hai.
+
 Đơn deco gift không có nút ✅/❌ ở kênh hàng chờ, không hiện trong `/done` `/cancel`
 `/remove` của Shop, và trang Orders của panel không hoàn thành/hủy được — tất cả để
 không đơn nào bị đóng khi khách chưa nhận link.
@@ -68,5 +80,5 @@ không đơn nào bị đóng khi khách chưa nhận link.
 ## Dữ liệu (DB riêng của Auto)
 
 - `dg_payments` — đơn chờ chuyển khoản (xóa khi hết hạn QR).
-- `dg_orders` — đơn đã thanh toán: `status` = `paid` → `delivering` → `completed`
+- `dg_orders` — đơn đã thanh toán (hoặc tạo trên panel, mã `DGP-…`): `status` = `paid` → `delivering` → `completed`
   (hoặc `dm_failed`, `delivered` = đã giao nhưng Shop chưa hoàn thành, `cancelled`).

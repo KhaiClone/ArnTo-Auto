@@ -32,6 +32,11 @@ const CATCH_UP_DAYS = 3;
 
 const canonical = (e) => [e.v, e.id, e.ts, e.kind, e.cmd || "", JSON.stringify(e.body ?? null)].join("\n");
 
+// Every non-ASCII character as \uXXXX: Discord may rewrite some characters of a
+// message's text (emoji), which would break the signature. JSON.parse gives the
+// exact same strings back.
+const asciiJson = (value) => JSON.stringify(value).replace(/[\u007f-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+
 class PanelBus {
     constructor(client) {
         this.client = client;
@@ -135,7 +140,7 @@ class PanelBus {
     }
 
     toMessage(label, envelope) {
-        const json = JSON.stringify(envelope);
+        const json = asciiJson(envelope);
         const head = `<@${this.panelBotId}> \`${TAG}\` ${label}`;
         const allowedMentions = { users: [this.panelBotId], repliedUser: false };
         if (json.length <= INLINE_MAX) return { content: `${head}\n\`\`\`json\n${json}\n\`\`\``, allowedMentions };

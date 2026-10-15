@@ -31,6 +31,7 @@ const {
     ThumbnailBuilder,
 } = require("discord.js");
 const panel = require("./PanelDecoGift");
+const { decorMedia } = require("../functions/decorImage");
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -75,7 +76,8 @@ const sep = () => new SeparatorBuilder();
 const settings = (client) => client.configs.settings;
 const accent = (client) => client.funcs.hexToInt(client.configs.embed.color);
 const shopUrl = (sku) => `https://discord.com/shop#itemSkuId=${sku}`;
-const v2 = (container) => ({ components: [container], flags: MessageFlags.IsComponentsV2 });
+// `files` always goes along: an edit without it keeps the last view's pictures.
+const v2 = (container, files = []) => ({ components: [container], files, flags: MessageFlags.IsComponentsV2 });
 
 function isEnabled(client) {
     const s = settings(client);
@@ -453,11 +455,16 @@ async function cartView(client, userId, note = "") {
         return v2(c);
     }
     items.forEach((d, i) => addDecor(c, d, decorLine(d, { index: i + 1 })));
-    const pictures = items.filter((d) => usableUrl(d.image));
+    // Composed here (functions/decorImage.js) and sent with the view; one that
+    // cannot be drawn shows its plain CDN picture.
+    const media = await Promise.all(items.map((d) => decorMedia(d)));
+    const pictures = items
+        .map((d, i) => ({ d, url: media[i].files.length ? media[i].url : usableUrl(d.thumb) ? d.thumb : null }))
+        .filter((p) => p.url);
     if (pictures.length) {
         c.addMediaGalleryComponents(
             new MediaGalleryBuilder().addItems(
-                pictures.map((d) => new MediaGalleryItemBuilder().setURL(d.image).setDescription(trunc(d.name, 1000))),
+                pictures.map((p) => new MediaGalleryItemBuilder().setURL(p.url).setDescription(trunc(p.d.name, 1000))),
             ),
         );
     }
@@ -485,7 +492,7 @@ async function cartView(client, userId, note = "") {
             new ButtonBuilder().setCustomId("dg:clear").setLabel("Xóa giỏ").setEmoji("🗑️").setStyle(ButtonStyle.Danger),
         ),
     );
-    return v2(c);
+    return v2(c, media.flatMap((m) => m.files));
 }
 
 function searchModal() {

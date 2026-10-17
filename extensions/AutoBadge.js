@@ -4,18 +4,13 @@
  * (badgeService) — ở đây chỉ giữ tiền, và khi tiền về thì gọi panel.
  *
  * LUỒNG
- *   1. Khách chọn badge + mốc, dán token
- *   2. quote() — panel kiểm token, báo giá. Khách có Nitro thì panel đọc luôn
- *      tiến độ bằng token của chính khách và cảnh báo nếu đã đạt mốc.
- *      Khách không Nitro thì phải TỰ KHAI số hiện tại.
+ *   1. Khách dán token, chọn badge + mốc
+ *   2. quote() — panel kiểm token, báo giá, đọc tiến độ bằng token của chính
+ *      khách và chặn nếu đã đạt mốc. Game Time / Game Variety chỉ bán cho acc có
+ *      Nitro: không Nitro (hoặc Discord không cho đọc) thì quote lỗi, không có QR.
  *   3. Hiện QR (không có bước xác nhận riêng — theo quyết định thiết kế)
- *   4. Tiền về → PanelBadge.start() → panel đọc bằng reader, so mốc, gửi
+ *   4. Tiền về → PanelBadge.start() → panel đọc lại bằng token khách, so mốc, gửi
  *   5. Panel báo qua Discord (badge.event, extensions/panelLink.js) → DM khách
- *
- * TẠI SAO KHÔNG ĐỌC BẰNG READER TRƯỚC KHI THU TIỀN: reader là acc Nitro cá nhân,
- * mỗi lượt đọc là một request phát ra từ nó. Nếu báo giá cũng dùng reader thì bất
- * kỳ ai cũng spam đốt tài nguyên acc đó miễn phí. Đặt reader sau cổng thanh toán
- * thì kẻ spam không với tới được.
  */
 
 const { nanoid } = require("nanoid");
@@ -67,17 +62,17 @@ async function _uniqueCode(client) {
 
 // ── Báo giá ──────────────────────────────────────────────────────────────────────
 
-/** Danh sách badge + mốc đang bán, giá đã áp hệ số theo Nitro của khách. */
-async function listOffers(client, { hasNitro = true } = {}) {
+/** Danh sách badge + mốc đang bán. */
+async function listOffers(client) {
     const badges = await pricing.sellableBadges(client);
     const out = [];
     for (const b of badges) {
-        out.push({ ...b, tiers: await pricing.badgeTiers(client, b.key, { hasNitro }) });
+        out.push({ ...b, tiers: await pricing.badgeTiers(client, b.key) });
     }
     return out.filter((b) => b.tiers.length);
 }
 
-/** Kiểm token + báo giá qua panel. Không đụng reader. */
+/** Kiểm token + báo giá qua panel. */
 async function quote(client, { token, badgeKey, tierKey }) {
     if (!PanelBadge.isEnabled()) throw new Error("Auto Badge chưa được bật (PANEL_BADGE).");
     return PanelBadge.quote({ token, badgeKey, tierKey });
@@ -85,15 +80,10 @@ async function quote(client, { token, badgeKey, tierKey }) {
 
 // ── Thanh toán ───────────────────────────────────────────────────────────────────
 
-/**
- * Tạo đơn chờ thanh toán.
- * `declaredValue` chỉ có với khách không Nitro. Nó KHÔNG dùng để tính tiền (giá
- * phẳng theo mốc) và cũng không dùng để tính số cần gửi — panel luôn lấy số
- * reader đọc được. Nó chỉ để cảnh báo sớm và làm bằng chứng khi tranh chấp.
- */
+/** Tạo đơn chờ thanh toán. */
 async function createPayment(
     client,
-    { userId, token, badgeKey, tierKey, tierName, unit, threshold, amount, hasNitro, declaredValue = null },
+    { userId, token, badgeKey, tierKey, tierName, unit, threshold, amount, hasNitro },
 ) {
     const transferCode = await _uniqueCode(client);
     const payment = {
@@ -106,7 +96,6 @@ async function createPayment(
         unit,
         threshold,
         hasNitro,
-        declaredValue,
         amount,
         transferCode,
         status: "pending",
@@ -139,7 +128,6 @@ async function createPayment(
             token,
             badgeKey,
             tierKey,
-            declaredValue,
             transferCode,
         };
 
@@ -245,18 +233,17 @@ async function purgeExpiredSessions(client) {
 // ── Giao cho panel chạy ──────────────────────────────────────────────────────────
 
 /**
- * Tiền đã về → gọi panel. Panel là bên đọc reader và quyết định tịch thu hay
+ * Tiền đã về → gọi panel. Panel là bên đọc tiến độ và quyết định tịch thu hay
  * chạy tiếp, nên ở đây không phán xét gì cả, chỉ chuyển tiếp và báo khách.
  */
 async function runOrder(client, context) {
-    const { paymentId, userId, token, badgeKey, tierKey, declaredValue } = context;
+    const { paymentId, userId, token, badgeKey, tierKey } = context;
 
     try {
         const order = await PanelBadge.start({
             token,
             badgeKey,
             tierKey,
-            declaredValue,
             ref: userId,
             paymentId,
         });

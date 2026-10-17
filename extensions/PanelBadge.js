@@ -3,10 +3,9 @@
  * Client gọi API Auto Badge của bot-panel. Thanh toán ở lại arnto-auto; panel
  * đọc tiến độ thật, gửi /science, rồi báo kết quả qua Discord ("badge.event", extensions/panelLink.js).
  *
- * Khác PanelQuest ở một điểm quan trọng: `quote` gọi được thoải mái vì nó KHÔNG
- * đụng tới acc reader (khách có Nitro thì đọc bằng token của chính họ, khách
- * không Nitro thì chưa đọc gì). `start` mới là chỗ reader vào cuộc — nên chỉ
- * được gọi sau khi tiền đã về.
+ * Panel đọc tiến độ bằng chính token của khách, nên Game Time / Game Variety
+ * chỉ bán cho acc có Nitro — `check` báo trước, `quote` từ chối nếu không đọc
+ * được. `start` chỉ được gọi sau khi tiền đã về.
  */
 
 const axios = require("axios");
@@ -31,8 +30,10 @@ function _throw(res, what) {
 
 /**
  * Kiểm token + lấy tình trạng tài khoản trước khi dựng bảng giá.
- * @returns {Promise<{accountId,username,hasNitro,premiumType,values,needsDeclaration}>}
- *   `values` chỉ có khi khách có Nitro (đọc bằng token của chính họ); không thì null.
+ * @returns {Promise<{accountId,username,hasNitro,premiumType,values,tieredAvailable,
+ *   tieredReason,hypesquadHouse}>}
+ *   `values` = tiến độ đọc bằng token của khách; null khi không đọc được, và khi
+ *   đó `tieredAvailable` = false, `tieredReason` nói vì sao (không Nitro…).
  */
 async function check({ token }) {
     const res = await axios.post(
@@ -45,9 +46,10 @@ async function check({ token }) {
 }
 
 /**
- * Kiểm token + báo giá. Không tốn tài nguyên reader.
+ * Kiểm token + báo giá. Lỗi 400 khi mua game badge mà acc không có Nitro hoặc
+ * panel không đọc được tiến độ — khi đó KHÔNG được hiện QR.
  * @returns {Promise<{accountId,username,hasNitro,price,threshold,unit,tierName,
- *   currentValue,alreadyOwned,needsDeclaration}>}
+ *   currentValue,alreadyOwned}>}
  */
 async function quote({ token, badgeKey, tierKey }) {
     const res = await axios.post(
@@ -60,17 +62,16 @@ async function quote({ token, badgeKey, tierKey }) {
 }
 
 /**
- * CHỈ gọi sau khi thanh toán thành công. Panel đọc bằng reader, so với mốc đã
- * mua rồi mới gửi.
+ * CHỈ gọi sau khi thanh toán thành công. Panel đọc lại tiến độ bằng token của
+ * khách, so với mốc đã mua rồi mới gửi.
  */
-async function start({ token, badgeKey, tierKey, declaredValue = null, ref, paymentId }) {
+async function start({ token, badgeKey, tierKey, ref, paymentId }) {
     const res = await axios.post(
         `${BASE()}/api/external/badges/start`,
         {
             token,
             badgeKey,
             tierKey,
-            declaredValue,
             ref: ref ?? null,
             paymentId: paymentId ?? null,
         },

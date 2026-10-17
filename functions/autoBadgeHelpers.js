@@ -79,14 +79,6 @@ function buildOrderLogEmbed(client, payment, state, note) {
         { name: "💎 Nitro", value: payment.hasNitro ? "Có" : "Không", inline: true },
         { name: "📋 Trạng thái", value: st.text, inline: true },
     ];
-    // Khách không Nitro tự khai — ghi lại con số họ khai để đối chiếu khi tranh chấp.
-    if (!payment.hasNitro && payment.declaredValue != null) {
-        fields.push({
-            name: "✍️ Khách khai",
-            value: `${fmt(payment.declaredValue)} ${UNIT_VI(payment.unit)}`,
-            inline: true,
-        });
-    }
     if (payment.orderId) {
         fields.push({ name: "🧾 Mã đơn panel", value: `\`${payment.orderId}\``, inline: false });
     }

@@ -28,7 +28,7 @@ function isEnabled() {
 function _fallback(client) {
     const s = client?.configs?.settings ?? {};
     return {
-        autoBadge: { enabled: false, badges: {}, nonNitroSurcharge: 1.5, overshoot: 1.1 },
+        autoBadge: { enabled: false, badges: {}, overshoot: 1.1 },
         autoQuest: {
             pricePerItem: s.questPricePerItem ?? 2000,
             monthlyPrice: s.monthlyQuestPrice ?? 50000,
@@ -61,14 +61,17 @@ async function getPricing(client, force = false) {
     }
 }
 
-/** Các mốc đang mở bán của một badge, đã áp hệ số non-Nitro. */
-async function badgeTiers(client, badgeKey, { hasNitro = true } = {}) {
+/**
+ * Game badge (tiered) chỉ bán cho tài khoản có Nitro. Panel cũ chưa gửi
+ * `requiresNitro` thì suy ra từ loại badge.
+ */
+const requiresNitro = (badge) => badge.requiresNitro ?? (badge.kind ?? "tiered") === "tiered";
+
+/** Các mốc đang mở bán của một badge. Giá phẳng, không phụ thuộc Nitro. */
+async function badgeTiers(client, badgeKey) {
     const pricing = await getPricing(client);
     const badge = pricing.autoBadge?.badges?.[badgeKey];
     if (!pricing.autoBadge?.enabled || !badge) return [];
-    // Phu phi non-Nitro chi ap cho badge phai doc bang reader. HypeSquad khong
-    // dung reader nen khong chiu phu phi.
-    const mult = hasNitro || !badge.usesReader ? 1 : (pricing.autoBadge.nonNitroSurcharge ?? 1);
     return badge.tiers
         .filter((t) => t.enabled)
         .map((t) => ({
@@ -76,8 +79,8 @@ async function badgeTiers(client, badgeKey, { hasNitro = true } = {}) {
             unit: badge.unit,
             badgeKey,
             kind: badge.kind ?? "tiered",
-            usesReader: badge.usesReader !== false,
-            finalPrice: Math.round(t.price * mult),
+            requiresNitro: requiresNitro(badge),
+            finalPrice: Math.round(t.price),
         }));
 }
 
@@ -92,7 +95,7 @@ async function sellableBadges(client) {
             label: b.label,
             unit: b.unit,
             kind: b.kind ?? "tiered",
-            usesReader: b.usesReader !== false,
+            requiresNitro: requiresNitro(b),
         }));
 }
 

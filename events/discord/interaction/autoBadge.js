@@ -6,10 +6,10 @@
  * LUỒNG
  *   bg:start                        → modal nhập token
  *   bg:token (modal)                → check token, lưu session, hiện chọn badge
- *   bg:badge:<sid>                  → hiện chọn mốc, giá đã áp hệ số Nitro
- *   bg:tier:<sid>:<badgeKey>        → có Nitro: ra QR luôn
- *                                     không Nitro: modal bắt khai số hiện tại
- *   bg:declare:<sid>:<bk>:<tk>      → ra QR
+ *                                     (Game Time / Variety chỉ hiện cho acc có
+ *                                     Nitro mà panel đọc được tiến độ)
+ *   bg:badge:<sid>                  → hiện chọn mốc, ẩn mốc đã đạt
+ *   bg:tier:<sid>:<badgeKey>        → ra QR
  *   bg:cancel:<paymentId>           → huỷ
  *
  * Token đi qua session lưu trong DB (không nhét vào customId — customId hiện ra
@@ -81,8 +81,11 @@ function _tokenModal() {
         );
 }
 
-async function _badgeSelect(client, sid, hasNitro) {
-    const badges = await pricing.sellableBadges(client);
+/** `tieredAvailable` false → bỏ Game Time / Game Variety khỏi menu. */
+async function _badgeSelect(client, sid, tieredAvailable) {
+    const badges = (await pricing.sellableBadges(client)).filter(
+        (b) => tieredAvailable || !b.requiresNitro,
+    );
     if (!badges.length) return null;
     return new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder()
@@ -106,13 +109,13 @@ async function _badgeSelect(client, sid, hasNitro) {
     );
 }
 
-async function _tierSelect(client, sid, badgeKey, hasNitro, values, currentHouse) {
-    const tiers = await pricing.badgeTiers(client, badgeKey, { hasNitro });
+async function _tierSelect(client, sid, badgeKey, values, currentHouse) {
+    const tiers = await pricing.badgeTiers(client, badgeKey);
     if (!tiers.length) return null;
 
     const isChoice = tiers[0]?.kind === "choice";
     // Badge choice (HypeSquad): so theo nhà đang ở, đọc được cho mọi khách.
-    // Badge tiered: so theo giá trị, chỉ biết được khi khách có Nitro.
+    // Badge tiered: so theo tiến độ panel đã đọc bằng token của khách.
     const owned = values?.[badgeKey]?.value ?? null;
     const options = tiers
         .map((t) => {
@@ -144,22 +147,6 @@ async function _tierSelect(client, sid, badgeKey, hasNitro, values, currentHouse
             .setPlaceholder("Chọn mốc muốn mua")
             .addOptions(options.slice(0, 25)),
     );
-}
-
-function _declareModal(sid, badgeKey, tierKey, unit) {
-    return new ModalBuilder()
-        .setCustomId(`bg:declare:${sid}:${badgeKey}:${tierKey}`)
-        .setTitle("Khai tình trạng hiện tại")
-        .addComponents(
-            new ActionRowBuilder().addComponents(
-                new TextInputBuilder()
-                    .setCustomId("value")
-                    .setLabel(`Bạn đang có bao nhiêu ${UNIT_VI(unit)}?`)
-                    .setStyle(TextInputStyle.Short)
-                    .setRequired(true)
-                    .setPlaceholder("Không rõ thì ghi 0"),
-            ),
-        );
 }
 
 function _paymentEmbed(client, payment) {
@@ -195,7 +182,7 @@ const _ephemeral = (content) => ({ content, flags: MessageFlags.Ephemeral });
 
 // ── Tạo QR ───────────────────────────────────────────────────────────────────────
 
-async function _startPayment(client, interaction, session, badgeKey, tierKey, declaredValue) {
+async function _startPayment(client, interaction, session, badgeKey, tierKey) {
     const q = await PanelBadge.quote({ token: session.token, badgeKey, tierKey });
 
     if (q.alreadyOwned === true) {
@@ -219,19 +206,10 @@ async function _startPayment(client, interaction, session, badgeKey, tierKey, de
         threshold: q.threshold,
         amount: q.price,
         hasNitro: q.hasNitro,
-        declaredValue,
     });
 
-    // Chỉ badge tiered mới có thể "mua nhầm mốc đã có". HypeSquad đọc được nhà
-    // hiện tại miễn phí nên không bao giờ rơi vào tình huống đó.
-    const warn =
-        q.hasNitro || q.kind === "choice"
-            ? ""
-            : "\n\n⚠️ Sau khi thanh toán, hệ thống sẽ kiểm tra tài khoản của bạn. " +
-              "**Nếu bạn đã đạt mốc này từ trước, số tiền đã chuyển sẽ không được hoàn lại.**";
-
     return interaction.editReply({
-        content: warn || null,
+        content: null,
         embeds: [_paymentEmbed(client, payment)],
         components: [_cancelRow(payment.id)],
         flags: MessageFlags.Ephemeral,
@@ -276,20 +254,31 @@ module.exports = {
                 if (!token) return interaction.editReply(_ephemeral("Token không hợp lệ."));
 
                 const info = await PanelBadge.check({ token });
+                // Panel cũ chưa trả tieredAvailable: đọc được tiến độ là bán được.
+                const tieredAvailable = info.tieredAvailable ?? (info.hasNitro && info.values != null);
+                const tieredReason =
+                    info.tieredReason ?? "Game Time và Game Variety chỉ bán cho tài khoản có Nitro";
                 const sid = _newSid();
                 await _setSession(client, sid, {
                     token,
-                    hasNitro: info.hasNitro,
                     values: info.values,
                     hypesquadHouse: info.hypesquadHouse ?? null,
                 });
 
-                const row = await _badgeSelect(client, sid, info.hasNitro);
-                if (!row) return interaction.editReply(_ephemeral("Hiện chưa có mốc nào mở bán."));
+                const row = await _badgeSelect(client, sid, tieredAvailable);
+                if (!row) {
+                    return interaction.editReply(
+                        _ephemeral(
+                            tieredAvailable
+                                ? "Hiện chưa có mốc nào mở bán."
+                                : `❌ ${tieredReason}.`,
+                        ),
+                    );
+                }
 
-                const note = info.hasNitro
-                    ? "Tài khoản có Nitro — hệ thống đọc được tiến độ của bạn và đã ẩn những mốc bạn đã đạt."
-                    : "Tài khoản không có Nitro — giá có phụ thu, và bạn sẽ cần tự khai tình trạng hiện tại.";
+                const note = tieredAvailable
+                    ? "Hệ thống đã đọc tiến độ của bạn và ẩn những mốc bạn đã đạt."
+                    : `⚠️ ${tieredReason}.`;
 
                 return interaction.editReply({
                     content: `Đã xác thực **${info.username}**.\n${note}`,
@@ -313,7 +302,6 @@ module.exports = {
                     client,
                     sid,
                     badgeKey,
-                    session.hasNitro,
                     session.values,
                     session.hypesquadHouse ?? null,
                 );
@@ -342,38 +330,10 @@ module.exports = {
                 }
                 const tierKey = interaction.values[0];
 
-                const tiers = await pricing.badgeTiers(client, badgeKey, {
-                    hasNitro: session.hasNitro,
-                });
-                const tier = tiers.find((t) => t.key === tierKey);
-
-                // Không Nitro + badge tiered: bắt khai trước, vì ta chưa đọc được
-                // gì của họ. Badge choice thì đọc được miễn phí, khỏi hỏi.
-                if (!session.hasNitro && tier?.kind !== "choice") {
-                    return interaction.showModal(
-                        _declareModal(sid, badgeKey, tierKey, tier?.unit ?? "games"),
-                    );
-                }
-
+                // Panel báo giá lại và từ chối game badge nếu acc không Nitro hoặc
+                // không đọc được tiến độ — khi đó khách thấy lỗi, không thấy QR.
                 await interaction.deferUpdate();
-                return _startPayment(client, interaction, session, badgeKey, tierKey, null);
-            }
-
-            // ── Khai tình trạng (không Nitro) ──────────────────────────────────
-            if (id.startsWith("bg:declare:")) {
-                await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-                const [, , sid, badgeKey, tierKey] = id.split(":");
-                const session = await _getSession(client, sid);
-                if (!session) {
-                    return interaction.editReply(
-                        _ephemeral("Phiên đã hết hạn. Bấm lại nút để bắt đầu."),
-                    );
-                }
-                const declared = Number(interaction.fields.getTextInputValue("value"));
-                if (!Number.isFinite(declared) || declared < 0) {
-                    return interaction.editReply(_ephemeral("Vui lòng nhập một số hợp lệ."));
-                }
-                return _startPayment(client, interaction, session, badgeKey, tierKey, declared);
+                return _startPayment(client, interaction, session, badgeKey, tierKey);
             }
 
             // ── Huỷ đơn ────────────────────────────────────────────────────────

@@ -38,15 +38,14 @@ module.exports = {
             });
         }
 
-        // Giá hiển thị là giá gốc (khách có Nitro). Khách không Nitro thấy giá đã
-        // phụ thu ở bước chọn mốc, sau khi bot biết token của họ.
+        // Giá phẳng theo mốc — ai mua cũng cùng một giá.
         const lines = [];
         // Cùng một emoji hai bên tiêu đề, như panel Gift Badge.
         const crown = emojis.badgeTag(badges[0].key);
         lines.push(`# ${crown} Auto Badge Discord ${crown}`);
 
         for (const b of badges) {
-            const tiers = await pricing.badgeTiers(client, b.key, { hasNitro: true });
+            const tiers = await pricing.badgeTiers(client, b.key);
             if (!tiers.length) continue;
             lines.push(`### ${emojis.badgeTag(b.key)} ${BADGE_TITLE[b.key] ?? b.label}`);
             for (const t of tiers) {
@@ -69,8 +68,8 @@ module.exports = {
         lines.push("### ⚠️ Lưu ý ⚠️");
         if (hasTiered) {
             lines.push(
-                "- **Game Time** và **Game Variety** chỉ người xem có **Nitro** mới thấy.",
-                "- Acc không Nitro: tự khai mốc đang có, chịu phụ phí. Mua mốc **đã đạt rồi** thì **không hoàn tiền**.",
+                "- **Game Time** và **Game Variety** chỉ bán cho tài khoản **có Nitro**, và chỉ người xem có **Nitro** mới thấy.",
+                "- Bot tự đọc tiến độ của bạn và ẩn những mốc bạn đã đạt.",
                 "- Badge lên sau **~2 ngày**. Bot nhắn ngay khi gửi xong.",
             );
         }

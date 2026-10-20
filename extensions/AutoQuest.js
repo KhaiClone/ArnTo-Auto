@@ -9,6 +9,7 @@
 
 const axios = require("axios");
 const pricing = require("../functions/pricing");
+const { vietQr } = require("../functions/vietQr");
 const { Buffer } = require("buffer");
 const {
     createCipheriv,
@@ -1921,11 +1922,6 @@ async function _generateUniqueTransferCode(client) {
     return `${nanoid(8).replaceAll("-", "").replaceAll("_", "")} Chuyen tien`;
 }
 
-function buildVietQrUrl(client, amount, transferCode) {
-    const s = client.configs.settings;
-    return `https://img.vietqr.io/image/${s.bankCode}-${s.bankAccount}-qr_only.png?addInfo=${encodeURIComponent(transferCode)}&accountName=${encodeURIComponent(s.bankHolder)}&amount=${amount}`;
-}
-
 async function createQuestPayment(client, { userId, accountId, questIds }) {
     const selectedQuestIds = [
         ...new Set((questIds ?? []).map((id) => String(id)).filter(Boolean)),
@@ -2046,7 +2042,7 @@ async function createQuestPayment(client, { userId, accountId, questIds }) {
         });
     }
 
-    return { ...payment, qrUrl: buildVietQrUrl(client, amount, transferCode) };
+    return { ...payment, ...(await vietQr(client, amount, transferCode)) };
 }
 
 async function getPaymentById(client, paymentId) {
@@ -2417,7 +2413,7 @@ async function createMonthlyPayment(
         amount,
         transferCode,
         expiresAt,
-        qrUrl: buildVietQrUrl(client, amount, transferCode),
+        ...(await vietQr(client, amount, transferCode)),
     };
 }
 
@@ -2718,7 +2714,6 @@ module.exports = {
     getActivationByPaymentId,
     removeActivationByPaymentId,
     getRecoverablePaidActivations,
-    buildVietQrUrl,
 
     // Monthly subscription
     createMonthlyPayment,

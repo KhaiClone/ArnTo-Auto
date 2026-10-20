@@ -212,6 +212,7 @@ async function _startPayment(client, interaction, session, badgeKey, tierKey) {
         content: null,
         embeds: [_paymentEmbed(client, payment)],
         components: [_cancelRow(payment.id)],
+        files: payment.qrFiles,
         flags: MessageFlags.Ephemeral,
     });
 }
@@ -347,6 +348,7 @@ module.exports = {
                         content: "Đơn này đã được thanh toán, không huỷ được.",
                         embeds: [],
                         components: [],
+                        attachments: [],
                         flags: MessageFlags.Ephemeral,
                     });
                 }
@@ -357,6 +359,7 @@ module.exports = {
                     content: "Đã huỷ đơn.",
                     embeds: [],
                     components: [],
+                    attachments: [],
                     flags: MessageFlags.Ephemeral,
                 });
             }

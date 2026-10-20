@@ -146,7 +146,8 @@ const payment = await createQuestPayment(client, {
     accountId: "...",
     questIds: ["id1", "id2"],
 });
-// payment = { id, transferCode, amount, qrUrl, status: "pending", ... }
+// payment = { id, transferCode, amount, qrUrl, qrFiles, status: "pending", ... }
+// qrUrl cho ảnh embed, qrFiles cho `files` của tin nhắn (functions/vietQr.js)
 ```
 
 Hàm này tự động:
@@ -202,6 +203,5 @@ const {
     getOpenPendingPayment, cancelPayment, expireStalePayments,
     upsertPendingActivation, getActivationByPaymentId,
     removeActivationByPaymentId, getRecoverablePaidActivations,
-    buildVietQrUrl,
 } = require("./extensions/AutoQuest");
 ```

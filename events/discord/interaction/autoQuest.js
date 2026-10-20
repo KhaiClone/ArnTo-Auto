@@ -34,7 +34,6 @@ const {
     cancelMonthlyPayment,
     activateMonthlySubscription,
     getUserAccountsStatus,
-    buildVietQrUrl,
     stopAccount,
 } = require("../../../extensions/AutoQuest");
 const PanelQuest = require("../../../extensions/PanelQuest");
@@ -83,6 +82,7 @@ const {
     buildMonthlyCancelRow,
     cancelOrderLog,
 } = require("../../../functions/autoQuestHelpers");
+const { vietQr } = require("../../../functions/vietQr");
 
 module.exports = {
     name: "interactionCreate",
@@ -547,6 +547,10 @@ async function _handleSelectMenu(client, interaction) {
         });
     }
 
+    // Ack now — the bot downloads the QR image (functions/vietQr), which can
+    // push past the 3s limit.
+    await interaction.deferUpdate();
+
     // Create new payment and register with AutoBank
     const payment = await createQuestPayment(client, {
         userId: interaction.user.id,
@@ -573,7 +577,7 @@ async function _handleSelectMenu(client, interaction) {
         selectedQuestIds,
     });
 
-    return interaction.update({
+    return interaction.editReply({
         embeds: [
             buildPaymentEmbed(
                 client,
@@ -582,6 +586,7 @@ async function _handleSelectMenu(client, interaction) {
             ),
         ],
         components: [buildPaymentActionRow(payment.id)],
+        files: payment.qrFiles,
     });
 }
 
@@ -1045,6 +1050,7 @@ async function _handleMonthlyModal(client, interaction) {
     // Existing pending monthly payment → show it again.
     const existed = await getOpenMonthlyPayment(client, userId, accountId);
     if (existed) {
+        const qr = await vietQr(client, existed.amount, existed.transferCode);
         return interaction.editReply({
             embeds: [
                 buildMonthlyPaymentEmbed(
@@ -1054,16 +1060,13 @@ async function _handleMonthlyModal(client, interaction) {
                         months: existed.months,
                         amount: existed.amount,
                         transferCode: existed.transferCode,
-                        qrUrl: buildVietQrUrl(
-                            client,
-                            existed.amount,
-                            existed.transferCode,
-                        ),
+                        qrUrl: qr.qrUrl,
                     },
                     "Bạn đã có đơn chờ thanh toán. Thanh toán hoặc chờ hết hạn để tạo đơn mới.",
                 ),
             ],
             components: [buildMonthlyCancelRow(existed.paymentId)],
+            files: qr.qrFiles,
         });
     }
 
@@ -1084,6 +1087,7 @@ async function _handleMonthlyModal(client, interaction) {
             ),
         ],
         components: [buildMonthlyCancelRow(payment.paymentId)],
+        files: payment.qrFiles,
     });
 }
 

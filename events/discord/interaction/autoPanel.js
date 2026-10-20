@@ -11,11 +11,7 @@ const {
 } = require("discord.js");
 const crypto = require("crypto");
 const { nanoid } = require("nanoid");
-
-const generateVietQR = (client, amount, transferCode) => {
-    const s = client.configs.settings;
-    return `https://img.vietqr.io/image/${s.bankCode}-${s.bankAccount}-qr_only.png?addInfo=${encodeURIComponent(transferCode)}&accountName=${encodeURIComponent(s.bankHolder)}&amount=${amount}`;
-};
+const { vietQr } = require("../../../functions/vietQr");
 
 const renderBotStatus = (bot) => {
     const live = bot.live || {};
@@ -384,7 +380,7 @@ module.exports = {
             );
 
             // Send QR code to user
-            const qrUrl = generateVietQR(client, amount, transferCode);
+            const qr = await vietQr(client, amount, transferCode);
 
             const embed = new EmbedBuilder()
                 .setTitle(
@@ -401,12 +397,12 @@ module.exports = {
                         "👉 Quét mã QR bên dưới bằng ứng dụng ngân hàng của bạn. Hệ thống sẽ tự động cập nhật sau vài giây sau khi nhận được tiền.",
                     ].join("\n"),
                 )
-                .setImage(qrUrl)
+                .setImage(qr.qrUrl)
                 .setColor(0x5865f2)
                 .setFooter({ text: "⚠️ Mã QR sẽ hết hạn sau 10 phút." })
                 .setTimestamp();
 
-            return interaction.editReply({ embeds: [embed] });
+            return interaction.editReply({ embeds: [embed], files: qr.qrFiles });
         }
     },
 };

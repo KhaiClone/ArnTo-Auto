@@ -32,6 +32,7 @@ const {
 } = require("discord.js");
 const panel = require("./PanelDecoGift");
 const { decorMedia } = require("../functions/decorImage");
+const { vietQr } = require("../functions/vietQr");
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -517,11 +518,6 @@ function searchModal() {
 const _newPaymentId = () => `DG${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const _transferCode = () => `${nanoid(8).replaceAll("-", "").replaceAll("_", "")} Chuyen tien`;
 
-function _vietQrUrl(client, amount, transferCode) {
-    const s = settings(client);
-    return `https://img.vietqr.io/image/${s.bankCode}-${s.bankAccount}-qr_only.png?addInfo=${encodeURIComponent(transferCode)}&accountName=${encodeURIComponent(s.bankHolder)}&amount=${amount}`;
-}
-
 async function _readPayments(client) {
     return (await client.db.get(PAY_DB)) ?? [];
 }
@@ -548,7 +544,7 @@ async function getOpenPayment(client, userId) {
  */
 async function startPayment(client, userId) {
     const existed = await getOpenPayment(client, userId);
-    if (existed) return { existed: { ...existed, qrUrl: _vietQrUrl(client, existed.total, existed.transferCode) } };
+    if (existed) return { existed: { ...existed, ...(await vietQr(client, existed.total, existed.transferCode)) } };
 
     const catalog = await panel.getCatalog({ force: true });
     const cart = cartOf(userId);
@@ -604,7 +600,7 @@ async function startPayment(client, userId) {
     });
 
     clearCart(userId);
-    return { payment: { ...payment, qrUrl: _vietQrUrl(client, total, transferCode) } };
+    return { payment: { ...payment, ...(await vietQr(client, total, transferCode)) } };
 }
 
 /**

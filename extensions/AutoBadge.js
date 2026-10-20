@@ -17,6 +17,7 @@ const { nanoid } = require("nanoid");
 const PanelBadge = require("./PanelBadge");
 const pricing = require("../functions/pricing");
 const badgeLog = require("../functions/autoBadgeHelpers");
+const { vietQr } = require("../functions/vietQr");
 
 const EXPIRE_MS = 10 * 60 * 1000;
 const DB = "badge_payments";
@@ -35,11 +36,6 @@ function _newPaymentId() {
 }
 function _randomTransferCode() {
     return `${nanoid(8).replaceAll("-", "").replaceAll("_", "")} Chuyen tien`;
-}
-
-function buildVietQrUrl(client, amount, transferCode) {
-    const s = client.configs.settings;
-    return `https://img.vietqr.io/image/${s.bankCode}-${s.bankAccount}-qr_only.png?addInfo=${encodeURIComponent(transferCode)}&accountName=${encodeURIComponent(s.bankHolder)}&amount=${amount}`;
 }
 
 // ── DB ───────────────────────────────────────────────────────────────────────────
@@ -148,7 +144,7 @@ async function createPayment(
         });
     }
 
-    return { ...payment, qrUrl: buildVietQrUrl(client, amount, transferCode) };
+    return { ...payment, ...(await vietQr(client, amount, transferCode)) };
 }
 
 async function markPaid(client, paymentId) {
@@ -411,5 +407,4 @@ module.exports = {
     expireStale,
     runOrder,
     handlePanelEvent,
-    buildVietQrUrl,
 };

@@ -146,6 +146,7 @@ async function _pay(client, i) {
         return i.followUp({
             embeds: [dg.paymentEmbed(client, res.existed, "Đơn đang chờ thanh toán.")],
             components: [dg.paymentCancelRow(res.existed.id)],
+            files: res.existed.qrFiles,
             flags: EPHEMERAL,
         });
     }
@@ -154,6 +155,7 @@ async function _pay(client, i) {
     return i.followUp({
         embeds: [dg.paymentEmbed(client, p, `Quét QR để thanh toán **${p.items.length} deco**. Thanh toán xong, đơn được lên tự động và admin sẽ gửi link quà qua tin nhắn riêng.`)],
         components: [dg.paymentCancelRow(p.id)],
+        files: p.qrFiles,
         flags: EPHEMERAL,
     });
 }
@@ -179,6 +181,7 @@ async function _cancelPayment(client, i, paymentId) {
             ),
         ],
         components: [],
+        attachments: [],
     });
 }
 

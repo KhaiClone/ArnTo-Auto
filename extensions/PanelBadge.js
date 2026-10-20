@@ -3,9 +3,9 @@
  * Client gọi API Auto Badge của bot-panel. Thanh toán ở lại arnto-auto; panel
  * đọc tiến độ thật, gửi /science, rồi báo kết quả qua Discord ("badge.event", extensions/panelLink.js).
  *
- * Panel đọc tiến độ bằng chính token của khách, nên Game Time / Game Variety
- * chỉ bán cho acc có Nitro — `check` báo trước, `quote` từ chối nếu không đọc
- * được. `start` chỉ được gọi sau khi tiền đã về.
+ * Panel đọc tiến độ bằng chính token của khách (mọi acc, có Nitro hay không) —
+ * `check` báo trước, `quote` từ chối nếu không đọc được. `start` chỉ được gọi
+ * sau khi tiền đã về.
  */
 
 const axios = require("axios");
@@ -33,7 +33,7 @@ function _throw(res, what) {
  * @returns {Promise<{accountId,username,hasNitro,premiumType,values,tieredAvailable,
  *   tieredReason,hypesquadHouse}>}
  *   `values` = tiến độ đọc bằng token của khách; null khi không đọc được, và khi
- *   đó `tieredAvailable` = false, `tieredReason` nói vì sao (không Nitro…).
+ *   đó `tieredAvailable` = false, `tieredReason` nói vì sao (Discord lỗi…).
  */
 async function check({ token }) {
     const res = await axios.post(
@@ -46,8 +46,8 @@ async function check({ token }) {
 }
 
 /**
- * Kiểm token + báo giá. Lỗi 400 khi mua game badge mà acc không có Nitro hoặc
- * panel không đọc được tiến độ — khi đó KHÔNG được hiện QR.
+ * Kiểm token + báo giá. Lỗi 400 khi mua game badge mà panel không đọc được tiến
+ * độ — khi đó KHÔNG được hiện QR.
  * @returns {Promise<{accountId,username,hasNitro,price,threshold,unit,tierName,
  *   currentValue,alreadyOwned}>}
  */

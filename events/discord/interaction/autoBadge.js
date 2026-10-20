@@ -6,8 +6,8 @@
  * LUỒNG
  *   bg:start                        → modal nhập token
  *   bg:token (modal)                → check token, lưu session, hiện chọn badge
- *                                     (Game Time / Variety chỉ hiện cho acc có
- *                                     Nitro mà panel đọc được tiến độ)
+ *                                     (Game Time / Variety hiện cho mọi acc mà
+ *                                     panel đọc được tiến độ, Nitro hay không)
  *   bg:badge:<sid>                  → hiện chọn mốc, ẩn mốc đã đạt
  *   bg:tier:<sid>:<badgeKey>        → ra QR
  *   bg:cancel:<paymentId>           → huỷ
@@ -84,7 +84,7 @@ function _tokenModal() {
 /** `tieredAvailable` false → bỏ Game Time / Game Variety khỏi menu. */
 async function _badgeSelect(client, sid, tieredAvailable) {
     const badges = (await pricing.sellableBadges(client)).filter(
-        (b) => tieredAvailable || !b.requiresNitro,
+        (b) => tieredAvailable || !b.readsProgress,
     );
     if (!badges.length) return null;
     return new ActionRowBuilder().addComponents(
@@ -331,8 +331,8 @@ module.exports = {
                 }
                 const tierKey = interaction.values[0];
 
-                // Panel báo giá lại và từ chối game badge nếu acc không Nitro hoặc
-                // không đọc được tiến độ — khi đó khách thấy lỗi, không thấy QR.
+                // Panel báo giá lại và từ chối game badge nếu không đọc được tiến
+                // độ — khi đó khách thấy lỗi, không thấy QR.
                 await interaction.deferUpdate();
                 return _startPayment(client, interaction, session, badgeKey, tierKey);
             }

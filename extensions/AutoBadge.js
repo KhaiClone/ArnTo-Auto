@@ -6,8 +6,8 @@
  * LUỒNG
  *   1. Khách dán token, chọn badge + mốc
  *   2. quote() — panel kiểm token, báo giá, đọc tiến độ bằng token của chính
- *      khách và chặn nếu đã đạt mốc. Game Time / Game Variety chỉ bán cho acc có
- *      Nitro: không Nitro (hoặc Discord không cho đọc) thì quote lỗi, không có QR.
+ *      khách và chặn nếu đã đạt mốc. Game Time / Game Variety bán cho mọi acc, có
+ *      Nitro hay không; panel không đọc được tiến độ thì quote lỗi, không có QR.
  *   3. Hiện QR (không có bước xác nhận riêng — theo quyết định thiết kế)
  *   4. Tiền về → PanelBadge.start() → panel đọc lại bằng token khách, so mốc, gửi
  *   5. Panel báo qua Discord (badge.event, extensions/panelLink.js) → DM khách
@@ -334,8 +334,7 @@ async function handlePanelEvent(client, event) {
                 isHouse
                     ? "Nhà HypeSquad đã đổi, bạn kiểm tra trên profile là thấy ngay."
                     : "Badge sẽ hiện trên profile sau khoảng **1 ngày** — đó là chu kỳ xử lý " +
-                          "của Discord, không phải đơn chưa xong.\n" +
-                          "_Badge này chỉ hiển thị với người xem có Nitro._",
+                          "của Discord, không phải đơn chưa xong.",
             );
             await badgeLog.updateOrderLog(client, payment, "sent");
             break;

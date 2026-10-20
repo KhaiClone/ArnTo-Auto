@@ -68,7 +68,7 @@ module.exports = {
         lines.push("### ⚠️ Lưu ý ⚠️");
         if (hasTiered) {
             lines.push(
-                "- **Game Time** và **Game Variety** chỉ bán cho tài khoản **có Nitro**, và chỉ người xem có **Nitro** mới thấy.",
+                "- **Game Time** và **Game Variety** bán cho **mọi tài khoản**, không cần Nitro.",
                 "- Bot tự đọc tiến độ của bạn và ẩn những mốc bạn đã đạt.",
                 "- Badge lên sau **~2 ngày**. Bot nhắn ngay khi gửi xong.",
             );

@@ -62,10 +62,12 @@ async function getPricing(client, force = false) {
 }
 
 /**
- * Game badge (tiered) chỉ bán cho tài khoản có Nitro. Panel cũ chưa gửi
- * `requiresNitro` thì suy ra từ loại badge.
+ * Game badge (tiered) cần panel đọc được tiến độ của khách — bán cho mọi tài
+ * khoản, có Nitro hay không (2026-10-21), nhưng bị ẩn khi check báo
+ * `tieredAvailable: false`. Panel mới không gửi `requiresNitro` nữa; panel cũ
+ * gửi nó đúng bằng "là badge tiered", nên suy ra từ loại badge là đủ.
  */
-const requiresNitro = (badge) => badge.requiresNitro ?? (badge.kind ?? "tiered") === "tiered";
+const readsProgress = (badge) => (badge.kind ?? "tiered") === "tiered";
 
 /** Các mốc đang mở bán của một badge. Giá phẳng, không phụ thuộc Nitro. */
 async function badgeTiers(client, badgeKey) {
@@ -79,7 +81,7 @@ async function badgeTiers(client, badgeKey) {
             unit: badge.unit,
             badgeKey,
             kind: badge.kind ?? "tiered",
-            requiresNitro: requiresNitro(badge),
+            readsProgress: readsProgress(badge),
             finalPrice: Math.round(t.price),
         }));
 }
@@ -95,7 +97,7 @@ async function sellableBadges(client) {
             label: b.label,
             unit: b.unit,
             kind: b.kind ?? "tiered",
-            requiresNitro: requiresNitro(b),
+            readsProgress: readsProgress(b),
         }));
 }
 

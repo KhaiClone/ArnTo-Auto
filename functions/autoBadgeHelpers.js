@@ -75,7 +75,7 @@ function buildOrderLogEmbed(client, payment, state, note) {
         { name: "👤 Khách hàng", value: `<@${payment.userId}>`, inline: true },
         { name: "🎖️ Badge", value: BADGE_VI(payment.badgeKey), inline: true },
         { name: "🎯 Mốc", value: _tierLine(payment), inline: true },
-        { name: "💰 Số tiền", value: `${fmt(payment.amount)}đ`, inline: true },
+        { name: "💰 Số tiền", value: `${fmt(payment.amount)}đ${payment.reseller ? " (giá CTV)" : ""}`, inline: true },
         { name: "💎 Nitro", value: payment.hasNitro ? "Có" : "Không", inline: true },
         { name: "📋 Trạng thái", value: st.text, inline: true },
     ];

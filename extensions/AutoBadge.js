@@ -68,18 +68,18 @@ async function listOffers(client) {
     return out.filter((b) => b.tiers.length);
 }
 
-/** Kiểm token + báo giá qua panel. */
-async function quote(client, { token, badgeKey, tierKey }) {
+/** Kiểm token + báo giá qua panel. buyerId là CTV → giá CTV của mốc (nếu có). */
+async function quote(client, { token, badgeKey, tierKey, buyerId }) {
     if (!PanelBadge.isEnabled()) throw new Error("Auto Badge chưa được bật (PANEL_BADGE).");
-    return PanelBadge.quote({ token, badgeKey, tierKey });
+    return PanelBadge.quote({ token, badgeKey, tierKey, buyerId });
 }
 
 // ── Thanh toán ───────────────────────────────────────────────────────────────────
 
-/** Tạo đơn chờ thanh toán. */
+/** Tạo đơn chờ thanh toán. `reseller`: amount là giá CTV (từ quote của panel). */
 async function createPayment(
     client,
-    { userId, token, badgeKey, tierKey, tierName, unit, threshold, amount, hasNitro },
+    { userId, token, badgeKey, tierKey, tierName, unit, threshold, amount, reseller = false, hasNitro },
 ) {
     const transferCode = await _uniqueCode(client);
     const payment = {
@@ -93,6 +93,7 @@ async function createPayment(
         threshold,
         hasNitro,
         amount,
+        reseller,
         transferCode,
         status: "pending",
         orderId: null,
@@ -242,6 +243,7 @@ async function runOrder(client, context) {
             tierKey,
             ref: userId,
             paymentId,
+            buyerId: userId, // CTV → panel ghi đơn theo giá CTV
         });
         const payment = await attachOrder(client, paymentId, order.orderId);
 

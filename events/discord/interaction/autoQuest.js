@@ -1058,6 +1058,8 @@ async function _handleMonthlyModal(client, interaction) {
                     {
                         paymentId: existed.paymentId,
                         months: existed.months,
+                        unitPrice: existed.unitPrice,
+                        reseller: existed.reseller,
                         amount: existed.amount,
                         transferCode: existed.transferCode,
                         qrUrl: qr.qrUrl,

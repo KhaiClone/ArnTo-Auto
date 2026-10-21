@@ -109,8 +109,10 @@ async function _badgeSelect(client, sid, tieredAvailable) {
     );
 }
 
-async function _tierSelect(client, sid, badgeKey, values, currentHouse) {
-    const tiers = await pricing.badgeTiers(client, badgeKey);
+async function _tierSelect(client, sid, badgeKey, values, currentHouse, userId) {
+    // CTV trên panel thấy giá CTV của mốc nào có; số tiền thật vẫn do quote quyết.
+    const reseller = await pricing.isReseller(userId);
+    const tiers = await pricing.badgeTiers(client, badgeKey, { reseller });
     if (!tiers.length) return null;
 
     const isChoice = tiers[0]?.kind === "choice";
@@ -132,7 +134,7 @@ async function _tierSelect(client, sid, badgeKey, values, currentHouse) {
                     ? isChoice
                         ? "Bạn đang ở nhà này rồi"
                         : "Bạn đã đạt mốc này rồi"
-                    : `${fmt(t.finalPrice)}đ · ${t.rarityName}`,
+                    : `${fmt(t.finalPrice)}đ${t.reseller ? " (giá CTV)" : ""} · ${t.rarityName}`,
                 // Ẩn thứ khách đã có — mua nhầm là tiền vứt đi.
                 _skip: already,
             };
@@ -160,7 +162,7 @@ function _paymentEmbed(client, payment) {
                 payment.threshold == null
                     ? `**Lựa chọn:** ${payment.tierName}`
                     : `**Mốc:** ${payment.tierName} — ${fmt(payment.threshold)} ${UNIT_VI(payment.unit)}`,
-                `**Số tiền:** ${fmt(payment.amount)}đ`,
+                `**Số tiền:** ${fmt(payment.amount)}đ${payment.reseller ? " (giá CTV)" : ""}`,
                 `**Nội dung CK:** \`${payment.transferCode}\``,
                 "",
                 `QR hết hạn sau ${Math.round(EXPIRE_MS / 60000)} phút.`,
@@ -183,7 +185,8 @@ const _ephemeral = (content) => ({ content, flags: MessageFlags.Ephemeral });
 // ── Tạo QR ───────────────────────────────────────────────────────────────────────
 
 async function _startPayment(client, interaction, session, badgeKey, tierKey) {
-    const q = await PanelBadge.quote({ token: session.token, badgeKey, tierKey });
+    // buyerId: CTV trên panel → q.price là giá CTV của mốc (nếu có).
+    const q = await PanelBadge.quote({ token: session.token, badgeKey, tierKey, buyerId: interaction.user.id });
 
     if (q.alreadyOwned === true) {
         return interaction.editReply(
@@ -205,6 +208,7 @@ async function _startPayment(client, interaction, session, badgeKey, tierKey) {
         unit: q.unit,
         threshold: q.threshold,
         amount: q.price,
+        reseller: q.reseller === true,
         hasNitro: q.hasNitro,
     });
 
@@ -305,6 +309,7 @@ module.exports = {
                     badgeKey,
                     session.values,
                     session.hypesquadHouse ?? null,
+                    interaction.user.id,
                 );
                 if (!row) {
                     return interaction.editReply({

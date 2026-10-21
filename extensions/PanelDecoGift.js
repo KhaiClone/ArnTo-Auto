@@ -49,30 +49,47 @@ function normalize(s) {
         .trim();
 }
 
+/** { at, categories, decors } → the cached shape, with its lookups. */
+function _withLookups(at, categories, decors) {
+    const byCategory = new Map();
+    for (const d of decors) {
+        if (!byCategory.has(d.category)) byCategory.set(d.category, []);
+        byCategory.get(d.category).push(d);
+    }
+    return { at, categories, decors, index: new Map(decors.map((d) => [d.sku_id, d])), byCategory };
+}
+
+/**
+ * The catalog a reseller (CTV) sees: each decor with a reseller price sells at
+ * it (`reseller: true`, `regularPrice` kept); the others at the regular price.
+ * Built once per fetched catalog.
+ */
+function _resellerView(cat) {
+    if (!cat.ctv) {
+        const decors = cat.decors.map((d) => (d.resellerPrice > 0 ? { ...d, price: d.resellerPrice, regularPrice: d.price, reseller: true } : d));
+        cat.ctv = _withLookups(cat.at, cat.categories, decors);
+    }
+    return cat.ctv;
+}
+
 /**
  * Decors sold as Gift, cached for a minute. While the panel is briefly away the
- * last list seen is served; with none yet, the error is thrown.
+ * last list seen is served; with none yet, the error is thrown. `reseller`: the
+ * buyer is a CTV on the panel → their prices (_resellerView).
  */
-async function getCatalog({ force = false } = {}) {
-    if (!force && _catalog && Date.now() - _catalog.at < CATALOG_TTL_MS) return _catalog;
+async function getCatalog({ force = false, reseller = false } = {}) {
+    const view = (cat) => (reseller ? _resellerView(cat) : cat);
+    if (!force && _catalog && Date.now() - _catalog.at < CATALOG_TTL_MS) return view(_catalog);
     try {
         const data = await _call("get", "/catalog", undefined, 20000);
-        const decors = (data.decors || []).map((d) => ({ ...d, norm: normalize(d.name) }));
-        const byCategory = new Map();
-        for (const d of decors) {
-            if (!byCategory.has(d.category)) byCategory.set(d.category, []);
-            byCategory.get(d.category).push(d);
-        }
-        _catalog = {
-            at: Date.now(),
-            categories: (data.categories || []).map((c) => ({ ...c, norm: normalize(c.name) })),
-            decors,
-            index: new Map(decors.map((d) => [d.sku_id, d])),
-            byCategory,
-        };
-        return _catalog;
+        _catalog = _withLookups(
+            Date.now(),
+            (data.categories || []).map((c) => ({ ...c, norm: normalize(c.name) })),
+            (data.decors || []).map((d) => ({ ...d, norm: normalize(d.name) })),
+        );
+        return view(_catalog);
     } catch (e) {
-        if (_catalog) return _catalog;
+        if (_catalog) return view(_catalog);
         throw e;
     }
 }

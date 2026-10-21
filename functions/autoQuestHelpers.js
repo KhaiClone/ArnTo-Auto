@@ -480,7 +480,8 @@ function buildPaymentEmbed(client, payment, note) {
             },
             {
                 name: "Đơn giá",
-                value: `${s.questPricePerItem.toLocaleString("vi-VN")}đ/quest`,
+                // unitPrice: giá đã tính lúc tạo đơn (giá panel, giá CTV); đơn cũ không có.
+                value: `${(payment.unitPrice ?? s.questPricePerItem).toLocaleString("vi-VN")}đ/quest${payment.reseller ? " (giá CTV)" : ""}`,
                 inline: true,
             },
             {
@@ -551,7 +552,7 @@ function buildMonthlyPaymentEmbed(client, payment, note) {
             },
             {
                 name: "Đơn giá",
-                value: `${s.monthlyQuestPrice.toLocaleString("vi-VN")}đ/tháng`,
+                value: `${(payment.unitPrice ?? s.monthlyQuestPrice).toLocaleString("vi-VN")}đ/tháng${payment.reseller ? " (giá CTV)" : ""}`,
                 inline: true,
             },
             {

@@ -1926,8 +1926,9 @@ async function createQuestPayment(client, { userId, accountId, questIds }) {
     const selectedQuestIds = [
         ...new Set((questIds ?? []).map((id) => String(id)).filter(Boolean)),
     ];
-    const amount =
-        selectedQuestIds.length * (await pricing.questPricePerItem(client));
+    // CTV trên panel → giá CTV khi có đặt (functions/pricing.js).
+    const unit = await pricing.questQuote(client, userId, "item");
+    const amount = selectedQuestIds.length * unit.price;
     const transferCode = await _generateUniqueTransferCode(client);
 
     const payment = {
@@ -1936,6 +1937,8 @@ async function createQuestPayment(client, { userId, accountId, questIds }) {
         userId,
         accountId,
         selectedQuestIds,
+        unitPrice: unit.price,
+        reseller: unit.reseller,
         amount,
         transferCode,
         status: "pending",
@@ -2350,7 +2353,9 @@ async function createMonthlyPayment(
     { userId, accountId, token, username, months = 1 },
 ) {
     const m = Math.max(1, parseInt(months, 10) || 1);
-    const amount = m * (await pricing.questMonthlyPrice(client));
+    // CTV trên panel → giá CTV khi có đặt (functions/pricing.js).
+    const unit = await pricing.questQuote(client, userId, "monthly");
+    const amount = m * unit.price;
     const transferCode = await _generateUniqueMonthlyCode(client);
     const secret = client.configs.settings.token;
     const paymentId = _newPaymentId();
@@ -2363,6 +2368,8 @@ async function createMonthlyPayment(
         accountId,
         username: username ?? "Unknown",
         months: m,
+        unitPrice: unit.price,
+        reseller: unit.reseller,
         amount,
         transferCode,
         status: "pending",
@@ -2410,6 +2417,8 @@ async function createMonthlyPayment(
     return {
         paymentId,
         months: m,
+        unitPrice: unit.price,
+        reseller: unit.reseller,
         amount,
         transferCode,
         expiresAt,

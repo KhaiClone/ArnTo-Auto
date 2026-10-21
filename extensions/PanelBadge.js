@@ -48,13 +48,16 @@ async function check({ token }) {
 /**
  * Kiểm token + báo giá. Lỗi 400 khi mua game badge mà panel không đọc được tiến
  * độ — khi đó KHÔNG được hiện QR.
- * @returns {Promise<{accountId,username,hasNitro,price,threshold,unit,tierName,
- *   currentValue,alreadyOwned}>}
+ *
+ * `buyerId` = Discord id người trả tiền: là CTV trên panel thì `price` là giá CTV
+ * của mốc (nếu mốc có), `reseller: true`. Panel cũ bỏ qua nó → giá thường.
+ * @returns {Promise<{accountId,username,hasNitro,price,reseller,threshold,unit,
+ *   tierName,currentValue,alreadyOwned}>}
  */
-async function quote({ token, badgeKey, tierKey }) {
+async function quote({ token, badgeKey, tierKey, buyerId }) {
     const res = await axios.post(
         `${BASE()}/api/external/badges/quote`,
-        { token, badgeKey, tierKey },
+        { token, badgeKey, tierKey, buyerId: buyerId ?? null },
         { headers: _headers(), timeout: 25000, validateStatus: () => true },
     );
     if (res.status >= 400) _throw(res, "Báo giá");
@@ -63,9 +66,10 @@ async function quote({ token, badgeKey, tierKey }) {
 
 /**
  * CHỈ gọi sau khi thanh toán thành công. Panel đọc lại tiến độ bằng token của
- * khách, so với mốc đã mua rồi mới gửi.
+ * khách, so với mốc đã mua rồi mới gửi. `buyerId` như quote(): đơn trên panel ghi
+ * giá CTV khi người mua là CTV.
  */
-async function start({ token, badgeKey, tierKey, ref, paymentId }) {
+async function start({ token, badgeKey, tierKey, ref, paymentId, buyerId }) {
     const res = await axios.post(
         `${BASE()}/api/external/badges/start`,
         {
@@ -74,6 +78,7 @@ async function start({ token, badgeKey, tierKey, ref, paymentId }) {
             tierKey,
             ref: ref ?? null,
             paymentId: paymentId ?? null,
+            buyerId: buyerId ?? null,
         },
         { headers: _headers(), timeout: 25000, validateStatus: () => true },
     );

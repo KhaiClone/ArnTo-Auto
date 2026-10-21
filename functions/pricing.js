@@ -10,12 +10,19 @@
  * Tầng 3 quan trọng: panel chết KHÔNG được làm bot ngừng bán. Giá cache cũ vẫn
  * đúng hơn là không bán được gì. Chỉ Auto Badge là bắt buộc phải có panel, vì
  * panel mới là nơi chạy engine.
+ *
+ * Giá CTV (2026-10-21): ai là CTV do panel quyết (trang Resellers) — hỏi qua
+ * /api/external/pricing/buyer/:id, cache 60s mỗi người. Món nào có giá CTV
+ * (resellerPrice, resellerPricePerItem, resellerMonthlyPrice) thì CTV trả giá
+ * đó, không có thì giá thường. Panel không trả lời được → lần biết gần nhất,
+ * chưa biết lần nào thì coi là khách thường (giá thường).
  */
 
 const axios = require("axios");
 
 const TTL = 60_000;
 let cache = { data: null, at: 0 };
+const resellerCache = new Map(); // userId → { reseller, at }
 
 const BASE = () => process.env.PANEL_API_URL;
 const KEY = () => process.env.PANEL_API_KEY;
@@ -69,21 +76,32 @@ async function getPricing(client, force = false) {
  */
 const readsProgress = (badge) => (badge.kind ?? "tiered") === "tiered";
 
-/** Các mốc đang mở bán của một badge. Giá phẳng, không phụ thuộc Nitro. */
-async function badgeTiers(client, badgeKey) {
+/** Giá CTV hợp lệ là số > 0; còn lại = chưa đặt. */
+const resellerPriceOf = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.round(Number(v)) : null);
+
+/**
+ * Các mốc đang mở bán của một badge. Giá phẳng, không phụ thuộc Nitro.
+ * `reseller`: người xem là CTV → `finalPrice` là giá CTV của mốc khi có
+ * (`reseller: true` trên mốc). Số tiền thật vẫn lấy từ quote của panel.
+ */
+async function badgeTiers(client, badgeKey, { reseller = false } = {}) {
     const pricing = await getPricing(client);
     const badge = pricing.autoBadge?.badges?.[badgeKey];
     if (!pricing.autoBadge?.enabled || !badge) return [];
     return badge.tiers
         .filter((t) => t.enabled)
-        .map((t) => ({
-            ...t,
-            unit: badge.unit,
-            badgeKey,
-            kind: badge.kind ?? "tiered",
-            readsProgress: readsProgress(badge),
-            finalPrice: Math.round(t.price),
-        }));
+        .map((t) => {
+            const ctv = reseller ? resellerPriceOf(t.resellerPrice) : null;
+            return {
+                ...t,
+                unit: badge.unit,
+                badgeKey,
+                kind: badge.kind ?? "tiered",
+                readsProgress: readsProgress(badge),
+                finalPrice: ctv ?? Math.round(t.price),
+                reseller: ctv !== null,
+            };
+        });
 }
 
 /** Badge nào đang có ít nhất một mốc mở bán. */
@@ -142,8 +160,49 @@ async function questMonthlyPrice(client) {
     );
 }
 
+/**
+ * Người mua có phải CTV đang hoạt động trên panel không. Hỏi panel, cache 60s.
+ * Panel không trả lời (sập, bản cũ chưa có route) → lần biết gần nhất, hoặc
+ * false: tính nhầm giá thường cho CTV còn hơn tính nhầm giá CTV cho khách.
+ */
+async function isReseller(userId) {
+    const id = String(userId || "");
+    if (!/^\d{17,20}$/.test(id) || !isEnabled()) return false;
+    const hit = resellerCache.get(id);
+    if (hit && Date.now() - hit.at < TTL) return hit.reseller;
+    try {
+        const res = await axios.get(`${BASE()}/api/external/pricing/buyer/${id}`, {
+            headers: { "x-api-key": KEY() },
+            timeout: 8000,
+            validateStatus: () => true,
+        });
+        if (res.status !== 200 || typeof res.data?.reseller !== "boolean") throw new Error(`HTTP ${res.status}`);
+        if (resellerCache.size > 2000) {
+            for (const [k, v] of resellerCache) if (Date.now() - v.at >= TTL) resellerCache.delete(k);
+        }
+        resellerCache.set(id, { reseller: res.data.reseller, at: Date.now() });
+        return res.data.reseller;
+    } catch {
+        return hit?.reseller ?? false;
+    }
+}
+
+/**
+ * Giá Auto Quest cho một người mua: CTV trả giá CTV khi panel có đặt, còn lại
+ * giá thường. kind: "item" (một quest lẻ) | "monthly" (một tháng).
+ * → { price, reseller }   reseller: true = đang tính giá CTV
+ */
+async function questQuote(client, userId, kind) {
+    const monthly = kind === "monthly";
+    const regular = monthly ? await questMonthlyPrice(client) : await questPricePerItem(client);
+    if (!(await isReseller(userId))) return { price: regular, reseller: false };
+    const ctv = await priceOf(client, "autoQuest", monthly ? "resellerMonthlyPrice" : "resellerPricePerItem", null);
+    return ctv ? { price: ctv, reseller: true } : { price: regular, reseller: false };
+}
+
 function invalidate() {
     cache = { data: null, at: 0 };
+    resellerCache.clear();
 }
 
 module.exports = {
@@ -154,5 +213,7 @@ module.exports = {
     priceOf,
     questPricePerItem,
     questMonthlyPrice,
+    isReseller,
+    questQuote,
     invalidate,
 };

@@ -31,6 +31,7 @@ const {
     ThumbnailBuilder,
 } = require("discord.js");
 const panel = require("./PanelDecoGift");
+const pricing = require("../functions/pricing");
 const { decorMedia } = require("../functions/decorImage");
 const { vietQr } = require("../functions/vietQr");
 
@@ -80,6 +81,9 @@ const shopUrl = (sku) => `https://discord.com/shop#itemSkuId=${sku}`;
 // `files` always goes along: an edit without it keeps the last view's pictures.
 const v2 = (container, files = []) => ({ components: [container], files, flags: MessageFlags.IsComponentsV2 });
 
+/** The catalog as `userId` buys it: a CTV on the panel sees (and pays) the reseller prices. */
+const catalogFor = async (userId, opts = {}) => panel.getCatalog({ ...opts, reseller: await pricing.isReseller(userId) });
+
 function isEnabled(client) {
     const s = settings(client);
     return panel.isEnabled() && !!s.decoGiftStaffChannelId && !!s.bankAccount;
@@ -121,7 +125,7 @@ function addDecor(container, d, line) {
 function decorLine(d, { inCart = false, index = null } = {}) {
     const head = `**${index != null ? `${index}. ` : ""}${d.name}**${inCart ? " ✓" : ""}`;
     const members = d.members?.length ? `\n-# Gồm: ${trunc(d.members.join(", "), 160)}` : "";
-    return `${head}\n${d.typeLabel} · **${money(d.price)}**${members}`;
+    return `${head}\n${d.typeLabel} · **${money(d.price)}**${d.reseller ? " (giá CTV)" : ""}${members}`;
 }
 
 const cartButton = (cart) =>
@@ -176,7 +180,7 @@ function clearCart(userId) {
 
 /** From an add menu → the note to show above the list. */
 async function addSkus(userId, skus) {
-    const catalog = await panel.getCatalog();
+    const catalog = await catalogFor(userId);
     return addedNote(addToCart(userId, skus, catalog)) || "Các deco này đã có trong giỏ.";
 }
 
@@ -226,7 +230,7 @@ function panelMessage(client) {
 }
 
 async function categoriesView(client, userId, page = 0, note = "") {
-    const catalog = await panel.getCatalog();
+    const catalog = await catalogFor(userId);
     const cart = cartOf(userId);
     const cats = catalog.categories;
     const pages = Math.max(1, Math.ceil(cats.length / CATS_PER_PAGE));
@@ -285,14 +289,14 @@ function addMenu(customId, decors, cart) {
             decors.map((d) => ({
                 label: trunc(d.name, 100),
                 value: d.sku_id,
-                description: trunc(`${cart.skus.includes(d.sku_id) ? "✓ Đã trong giỏ · " : ""}${d.typeLabel} · ${money(d.price)}`, 100),
+                description: trunc(`${cart.skus.includes(d.sku_id) ? "✓ Đã trong giỏ · " : ""}${d.typeLabel} · ${money(d.price)}${d.reseller ? " (giá CTV)" : ""}`, 100),
             })),
         );
     return new ActionRowBuilder().addComponents(menu);
 }
 
 async function categoryView(client, userId, catSku, page = 0, note = "") {
-    const catalog = await panel.getCatalog();
+    const catalog = await catalogFor(userId);
     const cart = cartOf(userId);
     const list = catalog.byCategory.get(catSku) || [];
     const catIndex = catalog.categories.findIndex((k) => k.sku_id === catSku);
@@ -359,7 +363,7 @@ function rank(query, catalog) {
  * → { view: "cart" | "search", note }
  */
 async function runSearch(client, userId, input) {
-    const catalog = await panel.getCatalog();
+    const catalog = await catalogFor(userId);
     const cart = cartOf(userId);
     const lines = String(input || "")
         .split(/\r?\n/)
@@ -399,7 +403,7 @@ async function runSearch(client, userId, input) {
 }
 
 async function searchView(client, userId, note = "") {
-    const catalog = await panel.getCatalog();
+    const catalog = await catalogFor(userId);
     const cart = cartOf(userId);
     const skus = (cart.search?.skus || []).filter((s) => catalog.index.has(s));
     const decors = skus.map((s) => catalog.index.get(s));
@@ -431,7 +435,7 @@ async function searchView(client, userId, note = "") {
 }
 
 async function cartView(client, userId, note = "") {
-    const catalog = await panel.getCatalog();
+    const catalog = await catalogFor(userId);
     const cart = cartOf(userId);
     const gone = cart.skus.filter((s) => !catalog.index.has(s)).length;
     if (gone) {
@@ -472,7 +476,7 @@ async function cartView(client, userId, note = "") {
     c.addSeparatorComponents(sep());
     c.addTextDisplayComponents(
         text(
-            `### Tổng: ${money(total)}\n-# Sau khi thanh toán, admin duyệt đơn và link quà được gửi qua tin nhắn riêng — nhớ mở DM.`,
+            `### Tổng: ${money(total)}${items.some((d) => d.reseller) ? " (giá CTV)" : ""}\n-# Sau khi thanh toán, admin duyệt đơn và link quà được gửi qua tin nhắn riêng — nhớ mở DM.`,
         ),
     );
     c.addActionRowComponents(
@@ -546,7 +550,7 @@ async function startPayment(client, userId) {
     const existed = await getOpenPayment(client, userId);
     if (existed) return { existed: { ...existed, ...(await vietQr(client, existed.total, existed.transferCode)) } };
 
-    const catalog = await panel.getCatalog({ force: true });
+    const catalog = await catalogFor(userId, { force: true });
     const cart = cartOf(userId);
     const missing = cart.skus.filter((s) => !catalog.index.has(s));
     if (missing.length) {
@@ -560,6 +564,8 @@ async function startPayment(client, userId) {
         return { sku_id: d.sku_id, name: d.name, type: d.type, typeLabel: d.typeLabel, price: d.price, thumb: d.thumb || null, image: d.image || null };
     });
     const total = items.reduce((sum, i) => sum + i.price, 0);
+    // A CTV on the panel pays the reseller price of the decors that have one.
+    const reseller = cart.skus.some((s) => catalog.index.get(s).reseller === true);
     const payment = await _serial(async () => {
         const list = await _readPayments(client);
         const active = new Set(list.filter((p) => Number(p.expiresAt) > Date.now()).map((p) => p.transferCode));
@@ -570,6 +576,7 @@ async function startPayment(client, userId) {
             userId,
             items,
             total,
+            reseller,
             transferCode,
             status: "pending",
             createdAt: Date.now(),
@@ -653,7 +660,7 @@ function paymentEmbed(client, payment, note) {
                 ),
                 inline: false,
             },
-            { name: "Tổng tiền", value: `\`${money(payment.total)}\``, inline: true },
+            { name: "Tổng tiền", value: `\`${money(payment.total)}\`${payment.reseller ? " (giá CTV)" : ""}`, inline: true },
             ...(open
                 ? [
                       { name: "Chủ tài khoản", value: `\`${s.bankHolder}\``, inline: true },
@@ -713,6 +720,7 @@ async function handlePaid(client, paymentId, bankMessage) {
             userId: payment.userId,
             items: payment.items,
             total: payment.total,
+            reseller: payment.reseller === true,
             transferCode: payment.transferCode,
             bankMessage: bankMessage ? String(bankMessage).slice(0, 800) : null,
             paidAt: Date.now(),
@@ -775,10 +783,11 @@ function _manualResult(client, o, existed) {
  * An order made on the bot-panel for a buyer who paid in a ticket (bus
  * "decor.gift.create"): no QR, otherwise the same as a paid one — the shop's
  * order, the staff card, an admin approves with the links. The panel prices the
- * items from the Gift catalog and picks the id, so a repeat returns the first.
+ * items from the Gift catalog (a CTV's at the reseller prices: `reseller`) and
+ * picks the id, so a repeat returns the first.
  * → { id, existed, status, shopOrderId, waitingUrl, shopError, staffUrl }
  */
-async function createByHand(client, { id, buyerId, items, total, note, by } = {}) {
+async function createByHand(client, { id, buyerId, items, total, reseller, note, by } = {}) {
     if (!MANUAL_ID.test(String(id || ""))) throw new Error("id is required (DGP-…)");
     if (!SNOWFLAKE.test(String(buyerId || ""))) throw new Error("buyerId is required");
     if (!Array.isArray(items) || !items.length || items.length > MAX_ITEMS) throw new Error(`1 to ${MAX_ITEMS} decors per order`);
@@ -809,6 +818,7 @@ async function createByHand(client, { id, buyerId, items, total, note, by } = {}
             userId: String(buyerId),
             items: clean,
             total: sum,
+            reseller: reseller === true,
             transferCode: null,
             bankMessage: null,
             manual: { by: byName, byId, note: trunc(String(note || "").trim(), 300) || null },
@@ -1081,8 +1091,8 @@ function staffView(client, o) {
                 `**Mã đơn:** ${o.shopOrderId ? `\`${o.shopOrderId}\`${o.waitingUrl ? ` · [hàng chờ](${o.waitingUrl})` : ""}` : "*chưa có*"} · ${m ? "mã" : "thanh toán"} \`${o.id}\``,
                 `**Khách:** <@${o.userId}> (\`${o.userId}\`)`,
                 m
-                    ? `**Tổng:** ${money(o.total)} · 🧾 **tạo trên panel** bởi ${m.byId ? `<@${m.byId}>` : `**${m.by}**`} lúc ${ts(o.paidAt)}`
-                    : `**Tổng:** ${money(o.total)} · đã thanh toán lúc ${ts(o.paidAt)}`,
+                    ? `**Tổng:** ${money(o.total)}${o.reseller ? " (giá CTV)" : ""} · 🧾 **tạo trên panel** bởi ${m.byId ? `<@${m.byId}>` : `**${m.by}**`} lúc ${ts(o.paidAt)}`
+                    : `**Tổng:** ${money(o.total)}${o.reseller ? " (giá CTV)" : ""} · đã thanh toán lúc ${ts(o.paidAt)}`,
                 ...(m
                     ? [
                           ...(m.note ? [`**Ghi chú:** ${m.note}`] : []),

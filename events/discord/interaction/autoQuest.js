@@ -991,9 +991,13 @@ async function _handleMonthlyModal(client, interaction) {
     }
 
     // Already subscribed → refresh the stored token for free, keep current expiry.
-    const activeUntil = PanelQuest.isEnabled()
-        ? null
-        : await getMonthlySubscriptionRaw(client, userId, accountId);
+    // Also with the panel on: a plan kept here (panel down at payment time) is still
+    // paid for — asking to pay again was wrong. It moves to the panel by itself.
+    const activeUntil = await getMonthlySubscriptionRaw(
+        client,
+        userId,
+        accountId,
+    );
     if (activeUntil) {
         await activateMonthlySubscription(client, {
             userId,

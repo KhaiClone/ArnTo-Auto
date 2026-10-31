@@ -11,6 +11,7 @@ const {
     runMonthlyEnrollScan,
     expireStaleMonthlyPayments,
     activateMonthlyFromPayment,
+    moveLocalMonthlyToPanel,
     warmBuildNumber,
 } = require("../../../extensions/AutoQuest");
 const {
@@ -665,12 +666,13 @@ module.exports = {
         // while one is already going in this process (a batch can take hours).
         let monthlyRunInProgress = false;
         let monthlyEnrollInProgress = false;
+        let monthlyMoveInProgress = false;
 
         const checkMonthlySchedule = async () => {
             try {
                 const { weekday, hour, dateStr } = vnParts();
                 if (!runDays.includes(weekday) || hour < runHour) return;
-                if (monthlyRunInProgress) return;
+                if (monthlyRunInProgress || monthlyMoveInProgress) return;
                 const lastRun = await client.db.get(MONTHLY_LAST_RUN_DB);
                 if (lastRun === dateStr) return; // already COMPLETED today
                 monthlyRunInProgress = true;
@@ -699,7 +701,7 @@ module.exports = {
             try {
                 const { hour, dateStr } = vnParts();
                 if (hour < enrollHour) return;
-                if (monthlyEnrollInProgress) return;
+                if (monthlyEnrollInProgress || monthlyMoveInProgress) return;
                 const last = await client.db.get(MONTHLY_LAST_ENROLL_DB);
                 if (last === dateStr) return; // already COMPLETED today
                 monthlyEnrollInProgress = true;
@@ -721,11 +723,29 @@ module.exports = {
                 console.warn("[MonthlyEnroll] scheduler error:", e.message);
             }
         };
+        // Plans kept here because the panel was down at payment time go to the panel
+        // as soon as it answers. Never while a local run/scan is using the records,
+        // and those wait for a move in flight (at most a minute).
+        const moveMonthlyToPanel = async () => {
+            if (monthlyRunInProgress || monthlyEnrollInProgress || monthlyMoveInProgress)
+                return;
+            monthlyMoveInProgress = true;
+            try {
+                await moveLocalMonthlyToPanel(client);
+            } catch (e) {
+                console.warn("[Monthly] move to panel:", e.message);
+            } finally {
+                monthlyMoveInProgress = false;
+            }
+        };
 
         // Kick off once now so a bot that starts AFTER the scheduled hour still
         // catches that day's slot. Do NOT await — runMonthlyBatch can take a long
         // time (quests complete in real time) and awaiting would block the rest of
         // ready(). The per-day guard key prevents a duplicate/concurrent run.
+        // The move goes first so a plan already on the panel is not run here too.
+        moveMonthlyToPanel().catch(() => {});
+        setInterval(moveMonthlyToPanel, 15 * 60 * 1000);
         checkMonthlySchedule().catch(() => {});
         checkMonthlyEnrollSchedule().catch(() => {});
         setInterval(checkMonthlySchedule, 60 * 1000); // check every minute

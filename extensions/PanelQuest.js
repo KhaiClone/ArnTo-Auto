@@ -52,10 +52,12 @@ async function start({ token, mode = "select", selectedQuestIds = [], ref }) {
     return res.data; // { accountId, status, ... }
 }
 
-async function activateMonthly({ token, months = 1, ref }) {
+/** expiresAt = moving a plan in that ran here: the panel adds the time left until
+ *  then instead of `months` (an older panel ignores it and uses months). */
+async function activateMonthly({ token, months = 1, ref, expiresAt }) {
     const res = await axios.post(
         `${BASE()}/api/external/quests/monthly`,
-        { token, months, ref: ref ?? null },
+        { token, months, ref: ref ?? null, ...(expiresAt ? { expiresAt } : {}) },
         { headers: _headers(), timeout: 20000, validateStatus: () => true },
     );
     if (res.status >= 400) {

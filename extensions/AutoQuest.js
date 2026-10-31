@@ -2449,6 +2449,8 @@ async function activateMonthlyFromPayment(client, paymentId) {
             });
             result = { monthlyExpiresAt: r.monthlyExpiresAt };
         } catch (e) {
+            // Run it here so the buyer is not left waiting; moveLocalMonthlyToPanel
+            // hands it over once the panel answers.
             console.warn(`[PanelQuest] monthly activate failed, local fallback: ${e.message}`);
         }
     }
@@ -2471,6 +2473,91 @@ async function activateMonthlyFromPayment(client, paymentId) {
         monthlyExpiresAt: result.monthlyExpiresAt,
     });
     return result;
+}
+
+// Plans the panel took but answered unexpectedly for (other account / earlier end):
+// not sent again in this process, so a retry can never stack time on the panel.
+const _monthlyMoveRefused = new Set();
+
+/**
+ * Hand monthly plans that run HERE over to the panel. A plan stays here when the
+ * panel could not be reached at payment time (activateMonthlyFromPayment) — and a
+ * local plan never shows on the panel's /quests and ignores its pause switch and
+ * schedule (2026-10-22: one stayed local for weeks, unnoticed). ready.js retries this
+ * until the panel takes it. The panel gets the exact end date (expiresAt); `months`
+ * rounded up is only for a panel that predates expiresAt, so the buyer never loses
+ * time. The local record goes only once the panel confirms an end date at least as
+ * late. A dead-token plan stays here until the buyer sends a new token.
+ */
+async function moveLocalMonthlyToPanel(client) {
+    const PanelQuest = require("./PanelQuest");
+    const out = { moved: 0, failed: 0 };
+    if (!PanelQuest.isEnabled()) return out;
+    const secret = client.configs.settings.token;
+    const plans = [];
+    for (const [userId, accounts] of Object.entries(await _readAccounts(client))) {
+        if (!accounts || typeof accounts !== "object" || Array.isArray(accounts))
+            continue;
+        for (const [accountId, record] of Object.entries(accounts)) {
+            if (!_isMonthlyActive(record)) continue;
+            const until = _normalizeMonthlyExpiresAt(record);
+            if (_monthlyMoveRefused.has(`${accountId}:${until}`)) continue;
+            const token = _decryptToken(record, secret);
+            if (token)
+                plans.push({ userId, accountId, token, until, username: record.username });
+        }
+    }
+    for (const p of plans) {
+        const untilMs = new Date(p.until).getTime();
+        let r;
+        try {
+            r = await PanelQuest.activateMonthly({
+                token: p.token,
+                months: Math.max(1, Math.ceil((untilMs - _now()) / MONTH_MS)),
+                ref: p.userId,
+                expiresAt: p.until,
+            });
+        } catch (e) {
+            out.failed++;
+            console.warn(`[PanelQuest] monthly ${p.accountId} still local: ${e.message}`);
+            continue;
+        }
+        if (
+            r?.accountId !== p.accountId ||
+            !(new Date(r.monthlyExpiresAt).getTime() >= untilMs)
+        ) {
+            _monthlyMoveRefused.add(`${p.accountId}:${p.until}`);
+            out.failed++;
+            console.warn(
+                `[PanelQuest] monthly ${p.accountId} kept local: panel answered ${r?.accountId} until ${r?.monthlyExpiresAt}`,
+            );
+            continue;
+        }
+        await _dropMovedMonthly(client, p.userId, p.accountId, p.until);
+        out.moved++;
+        console.log(
+            `[PanelQuest] monthly ${p.username ?? "?"} (${p.accountId}) moved to the panel, until ${r.monthlyExpiresAt}`,
+        );
+    }
+    return out;
+}
+
+/** Remove a plan the panel now runs. Re-read first: if it was extended here while the
+ *  panel call was in flight, only that extra time stays, for the next move. */
+async function _dropMovedMonthly(client, userId, accountId, movedUntil) {
+    const raw = await _readAccounts(client);
+    const record = raw[userId]?.[accountId];
+    if (!record) return;
+    const extra =
+        new Date(_normalizeMonthlyExpiresAt(record) ?? 0).getTime() -
+        new Date(movedUntil).getTime();
+    if (extra > 0) {
+        record.monthlyExpiresAt = new Date(_now() + extra).toISOString();
+    } else {
+        delete raw[userId][accountId];
+        if (Object.keys(raw[userId]).length === 0) delete raw[userId];
+    }
+    await _writeAccounts(client, raw);
 }
 
 /** All accounts with an active subscription and a usable (decryptable) token. */
@@ -2734,6 +2821,7 @@ module.exports = {
     expireStaleMonthlyPayments,
     activateMonthlySubscription,
     activateMonthlyFromPayment,
+    moveLocalMonthlyToPanel,
     getMonthlyAccounts,
     getUserAccountsStatus,
     runMonthlyBatch,

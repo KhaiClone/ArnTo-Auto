@@ -2446,6 +2446,8 @@ async function activateMonthlyFromPayment(client, paymentId) {
                 token,
                 months: entry.months,
                 ref: entry.userId,
+                // Into the shop's books (Orders) at what was paid.
+                order: { id: entry.paymentId, price: entry.amount, reseller: entry.reseller === true },
             });
             result = { monthlyExpiresAt: r.monthlyExpiresAt };
         } catch (e) {

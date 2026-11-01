@@ -266,6 +266,8 @@ async function unlockPaymentIfPaid(client, payment) {
                     mode: "select",
                     selectedQuestIds: ids,
                     ref: payment.userId,
+                    // Into the shop's books (Orders) at what was paid.
+                    order: { id: payment.id, price: payment.amount, reseller: payment.reseller === true },
                 });
                 if (activation)
                     await removeActivationByPaymentId(client, payment.id);

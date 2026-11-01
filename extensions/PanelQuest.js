@@ -36,12 +36,15 @@ async function preview(token) {
 
 /**
  * Start running quests on the panel for this token.
- * @param {{token,mode?,selectedQuestIds?,ref?}} opts  ref = arnto userId (echoed in webhooks)
+ * @param {{token,mode?,selectedQuestIds?,ref?,order?}} opts  ref = arnto userId (echoed in webhooks)
+ *   order = { id, price, reseller } — the payment this run is for: the panel puts it in
+ *   the shop's books (Orders) at that price. Without it (a fresh token for a run already
+ *   paid) the panel goes on with the order it has. An older panel ignores it.
  */
-async function start({ token, mode = "select", selectedQuestIds = [], ref }) {
+async function start({ token, mode = "select", selectedQuestIds = [], ref, order }) {
     const res = await axios.post(
         `${BASE()}/api/external/quests/start`,
-        { token, mode, selectedQuestIds, ref: ref ?? null },
+        { token, mode, selectedQuestIds, ref: ref ?? null, ...(order ? { order } : {}) },
         { headers: _headers(), timeout: 20000, validateStatus: () => true },
     );
     if (res.status >= 400) {
@@ -53,11 +56,12 @@ async function start({ token, mode = "select", selectedQuestIds = [], ref }) {
 }
 
 /** expiresAt = moving a plan in that ran here: the panel adds the time left until
- *  then instead of `months` (an older panel ignores it and uses months). */
-async function activateMonthly({ token, months = 1, ref, expiresAt }) {
+ *  then instead of `months` (an older panel ignores it and uses months). `order` as in
+ *  start() — only for a purchase, never with expiresAt (the move is not one). */
+async function activateMonthly({ token, months = 1, ref, expiresAt, order }) {
     const res = await axios.post(
         `${BASE()}/api/external/quests/monthly`,
-        { token, months, ref: ref ?? null, ...(expiresAt ? { expiresAt } : {}) },
+        { token, months, ref: ref ?? null, ...(expiresAt ? { expiresAt } : {}), ...(order ? { order } : {}) },
         { headers: _headers(), timeout: 20000, validateStatus: () => true },
     );
     if (res.status >= 400) {

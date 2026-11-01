@@ -40,10 +40,12 @@ module.exports = {
     vietqrChannelId: process.env.VIETQR_CHANNEL_ID || "",
     logWebhookUrl: process.env.LOG_WEBHOOK_URL || "",
     questOrderLogChannelId: process.env.QUEST_ORDER_LOG_CHANNEL_ID || "",
-    // Channel every finished-quest notice is posted to (the buyer is mentioned in
-    // it). Empty = fall back to DMing the buyer, the way it worked before.
-    questNotifyChannelId: process.env.QUEST_NOTIFY_CHANNEL_ID || "",
     badgeOrderLogChannelId: process.env.BADGE_ORDER_LOG_CHANNEL_ID || "",
+    // Order feed (functions/orderFeed.js): a webhook in the channel where every
+    // Auto Quest / Auto Badge / Deco Gift order is one message, edited as it goes
+    // (the buyer is mentioned, silently). Replaces QUEST_NOTIFY_CHANNEL_ID (one
+    // message per finished quest, posted by the bot). Empty = no feed.
+    orderFeedWebhookUrl: process.env.ORDER_FEED_WEBHOOK_URL || "",
 
     // ── Auto Deco Gift (extensions/AutoDecoGift.js) ────────────────────────────
     // Staff channel where every paid order lands with Duyệt / Hủy. Empty = off.

@@ -1,6 +1,6 @@
 /**
  * autoBadgeHelpers.js
- * Embed cho Auto Badge: log đơn ở kênh admin và DM báo khách.
+ * Embed cho Auto Badge: log đơn ở kênh admin, tin đơn trên feed đơn auto và DM báo khách.
  *
  * Cùng khuôn với autoQuestHelpers.js — MỘT tin nhắn log cho mỗi đơn, sửa tại chỗ
  * theo từng bước (chờ thanh toán → đã trả → hoàn tất), thay vì mỗi bước một dòng
@@ -10,6 +10,8 @@
  * còn việc lưu messageId vào bản ghi payment là của bên gọi. Nhờ vậy chiều phụ
  * thuộc chỉ có một hướng (AutoBadge → helpers), không vòng như bên quest.
  */
+
+const orderFeed = require("./orderFeed");
 
 // ── Nhãn ─────────────────────────────────────────────────────────────────────────
 
@@ -130,6 +132,53 @@ async function updateOrderLog(client, payment, state, note) {
     }
 }
 
+// ── Tin đơn trên feed đơn auto ───────────────────────────────────────────────────
+// Kênh chung với Auto Quest và Deco Gift (functions/orderFeed.js, gửi bằng webhook):
+// một tin mỗi đơn, đăng lúc tiền về, sửa tại chỗ tới khi xong. Khách thấy kênh này
+// nên chỉ ghi badge + mốc + trạng thái — không tiền, không Nitro, không lý do lỗi
+// (cái đó ở log admin và DM). Tịch thu / hoàn tiền đều hiện "Đã huỷ".
+
+const FEED_STATE = {
+    paid: { text: "💸 Đã thanh toán — đang xử lý", color: COLOR.paid },
+    sent: { text: "✅ Hoàn tất", color: COLOR.done },
+    manual_review: { text: "⏳ Admin đang kiểm tra", color: COLOR.warn },
+    failed: { text: "⚠️ Lỗi — admin sẽ liên hệ", color: COLOR.bad },
+    forfeited: { text: "🚫 Đã huỷ", color: COLOR.bad },
+    refund_due: { text: "🚫 Đã huỷ", color: COLOR.bad },
+};
+
+function buildFeedEmbed(client, payment, state) {
+    const st = FEED_STATE[state] ?? FEED_STATE.paid;
+    return client.embed("", {
+        title: "🎖️ Đơn Auto Badge",
+        color: st.color,
+        fields: [
+            { name: "👤 Khách hàng", value: `<@${payment.userId}>`, inline: true },
+            { name: "🎖️ Badge", value: BADGE_VI(payment.badgeKey), inline: true },
+            { name: "🎯 Mốc", value: _tierLine(payment), inline: true },
+            { name: "📌 Trạng thái", value: st.text, inline: false },
+        ],
+        footer: { text: `BADGE · ${payment.id}` },
+        timestamp: true,
+    });
+}
+
+/**
+ * Đăng tin đơn lần đầu (lúc tiền về).
+ * @returns {Promise<string | null>} messageId — bên gọi tự lưu vào payment (feedMessageId)
+ */
+async function postFeed(client, payment, state = "paid") {
+    if (!payment) return null;
+    const posted = await orderFeed.post(client, payment.userId, buildFeedEmbed(client, payment, state));
+    return posted?.messageId ?? null;
+}
+
+/** Sửa tin đơn tại chỗ. Đơn chưa có tin (đơn từ trước khi có feed, feed tắt) thì bỏ qua. */
+async function updateFeed(client, payment, state) {
+    if (!payment?.feedMessageId) return;
+    await orderFeed.edit(client, payment.feedMessageId, payment.userId, buildFeedEmbed(client, payment, state));
+}
+
 // ── DM cho khách ─────────────────────────────────────────────────────────────────
 
 /** Gửi một embed vào DM. Khách chặn DM thì im lặng bỏ qua, không làm hỏng luồng đơn. */
@@ -150,5 +199,8 @@ module.exports = {
     buildOrderLogEmbed,
     sendOrderLog,
     updateOrderLog,
+    buildFeedEmbed,
+    postFeed,
+    updateFeed,
     dm,
 };

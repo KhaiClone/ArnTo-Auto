@@ -230,11 +230,23 @@ async function purgeExpiredSessions(client) {
 // ── Giao cho panel chạy ──────────────────────────────────────────────────────────
 
 /**
+ * Tin đơn trên feed đơn auto: đăng MỘT lần lúc tiền về, lưu feedMessageId vào
+ * payment. runOrder chạy lại (khôi phục sau restart) thì tin đã có, không đăng lại.
+ */
+async function _ensureFeed(client, paymentId) {
+    const payment = await getPaymentById(client, paymentId);
+    if (!payment || payment.feedMessageId) return payment;
+    const messageId = await badgeLog.postFeed(client, payment);
+    return messageId ? _patchPayment(client, paymentId, { feedMessageId: messageId }) : payment;
+}
+
+/**
  * Tiền đã về → gọi panel. Panel là bên đọc tiến độ và quyết định tịch thu hay
  * chạy tiếp, nên ở đây không phán xét gì cả, chỉ chuyển tiếp và báo khách.
  */
 async function runOrder(client, context) {
     const { paymentId, userId, token, badgeKey, tierKey } = context;
+    await _ensureFeed(client, paymentId);
 
     try {
         const order = await PanelBadge.start({
@@ -265,6 +277,7 @@ async function runOrder(client, context) {
         // báo khách và log để xử lý tay.
         const payment = await getPaymentById(client, paymentId);
         await badgeLog.updateOrderLog(client, payment, "failed", `Không khởi chạy được: ${err.message}`);
+        await badgeLog.updateFeed(client, payment, "failed");
         await badgeLog.dm(
             client,
             userId,
@@ -303,7 +316,7 @@ function _dmFields(p) {
     return out;
 }
 
-/** Sự kiện badge.event từ panel (kênh Discord) → hàm này. Dịch sự kiện thành DM cho khách. */
+/** Sự kiện badge.event từ panel (kênh Discord) → hàm này. Dịch sự kiện thành DM cho khách, sửa log admin + tin feed. */
 async function handlePanelEvent(client, event) {
     const { orderId, ref, type } = event;
     const userId = ref;
@@ -339,6 +352,7 @@ async function handlePanelEvent(client, event) {
                           "của Discord, không phải đơn chưa xong.",
             );
             await badgeLog.updateOrderLog(client, payment, "sent");
+            await badgeLog.updateFeed(client, payment, "sent");
             break;
         }
 
@@ -356,6 +370,7 @@ async function handlePanelEvent(client, event) {
                 "forfeited",
                 `Đã có sẵn ${fmt(event.measuredValue)}/${fmt(event.threshold)} ${UNIT_VI(event.unit)}`,
             );
+            await badgeLog.updateFeed(client, payment, "forfeited");
             break;
 
         case "refund_due":
@@ -365,6 +380,7 @@ async function handlePanelEvent(client, event) {
                 "Admin sẽ hoàn tiền cho bạn.",
             );
             await badgeLog.updateOrderLog(client, payment, "refund_due");
+            await badgeLog.updateFeed(client, payment, "refund_due");
             break;
 
         case "manual_review":
@@ -374,6 +390,7 @@ async function handlePanelEvent(client, event) {
                 "Tiền của bạn vẫn được giữ, không mất đi đâu.",
             );
             await badgeLog.updateOrderLog(client, payment, "manual_review", event.error ?? null);
+            await badgeLog.updateFeed(client, payment, "manual_review");
             break;
 
         case "failed":
@@ -383,6 +400,7 @@ async function handlePanelEvent(client, event) {
                 `${event.error ?? "Lỗi không xác định"}. Admin sẽ liên hệ với bạn.`,
             );
             await badgeLog.updateOrderLog(client, payment, "failed", event.error ?? null);
+            await badgeLog.updateFeed(client, payment, "failed");
             break;
 
         default:

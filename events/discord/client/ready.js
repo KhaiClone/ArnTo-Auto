@@ -19,9 +19,8 @@ const {
     editOrderLogPaid,
     cancelOrderLog,
     unlockPaymentIfPaid,
-    sendQuestDoneNotice,
-    sendQuestOrderDoneNotice,
 } = require("../../../functions/autoQuestHelpers");
+const questFeed = require("../../../functions/questFeed");
 
 module.exports = {
     name: "clientReady",
@@ -162,7 +161,11 @@ module.exports = {
                 try {
                     const user = await client.users.fetch(userId);
 
+                    // The local runner (the panel was unreachable) feeds the order
+                    // feed like the panel's events do (functions/panelQuestEvent.js),
+                    // without quest ids or a monthly runId.
                     if (type === "token_dead") {
+                        await questFeed.runEnded(client, { userId, accountId, username, plan: "single", state: "paused" });
                         // Update order log to show paused state (not cancelled — quest may resume after token refresh)
                         await cancelOrderLog(
                             client,
@@ -207,6 +210,7 @@ module.exports = {
                                 quests.length,
                             );
                         }
+                        await questFeed.runStarted(client, { userId, accountId, username, plan: "single", quests });
                         return user.send({
                             embeds: [
                                 client.embed(
@@ -228,11 +232,10 @@ module.exports = {
                         });
                     }
 
-                    // Per-quest completion notice (quest lẻ): fires as each quest
-                    // finishes so a restart mid-order never drops earlier quests.
-                    // Posted to the quest notify channel, not the buyer's DMs.
+                    // Each quest is ticked off in the order's feed message as it
+                    // finishes, so a restart mid-order never drops earlier quests.
                     if (type === "quest_completed_one") {
-                        return sendQuestDoneNotice(client, {
+                        return questFeed.questDone(client, {
                             userId,
                             accountId,
                             username,
@@ -242,8 +245,7 @@ module.exports = {
                         });
                     }
 
-                    // Batch completion now only updates the staff order log — the
-                    // per-quest notices above replace the (previously batch) user DM.
+                    // Batch completion: the staff order log, and the feed message's state.
                     if (type === "quest_batch_completed") {
                         await editOrderLog(
                             client,
@@ -252,6 +254,7 @@ module.exports = {
                             username,
                             completedQuestNames,
                         );
+                        await questFeed.runEnded(client, { userId, accountId, username, plan: "single", state: "done" });
                         return;
                     }
 
@@ -298,7 +301,7 @@ module.exports = {
                     }
 
                     if (type === "monthly_quest_done") {
-                        return sendQuestDoneNotice(client, {
+                        return questFeed.questDone(client, {
                             userId,
                             accountId,
                             username,
@@ -309,6 +312,7 @@ module.exports = {
                     }
 
                     if (type === "monthly_token_dead") {
+                        await questFeed.runEnded(client, { userId, accountId, username, plan: "monthly", state: "paused" });
                         return user.send({
                             embeds: [
                                 client.embed(

@@ -9,7 +9,8 @@ gõ lệnh: chọn deco → quét QR → admin duyệt và điền link quà →
 |------|-------|
 | Panel, giỏ hàng, QR, kênh staff | ArnTo-Auto (`extensions/AutoDecoGift.js`, `events/discord/interaction/autoDecoGift.js`) |
 | Danh sách deco + giá Gift | bot-panel đọc dữ liệu của ArnTo-assistant (`GET /api/external/decor-gift/catalog`) |
-| Đơn `arnto_N` trong kênh hàng chờ, DM hóa đơn, hoàn thành/hủy | ArnTo-Shop, panel gửi lệnh qua kênh bus (`order.create` / `order.complete` / `order.cancel`) |
+| Tin đơn trong kênh feed đơn auto (webhook `ORDER_FEED_WEBHOOK_URL`, `functions/orderFeed.js`) | ArnTo-Auto |
+| Đơn `arnto_N`, DM hóa đơn, hoàn thành/hủy | ArnTo-Shop, panel gửi lệnh qua kênh bus (`order.create` / `order.complete` / `order.cancel`) |
 | DM link quà cho khách | ArnTo-assistant (`decor.gift.deliver`, link được mã hóa trên kênh bus) |
 
 Auto chỉ gọi panel (`extensions/PanelDecoGift.js`), không gọi bot nào khác.
@@ -23,6 +24,7 @@ PANEL_API_URL=http://127.0.0.1:4201
 PANEL_API_KEY=            # key riêng của Auto
 DECO_GIFT_STAFF_CHANNEL_ID=   # kênh staff nhận đơn đã thanh toán
 DECO_GIFT_SELLER_ID=871329074046435338   # seller tính đơn (KhaiDev)
+ORDER_FEED_WEBHOOK_URL=   # webhook kênh feed đơn auto (chung với Auto Quest / Auto Badge)
 # + BANK_CODE / BANK_ACCOUNT / BANK_HOLDER / VIETQR_CHANNEL_ID như các tính năng khác
 ```
 
@@ -53,7 +55,7 @@ tiền, **tin ngân hàng** (AutoBank chỉ khớp nội dung CK, không kiểm 
 
 - **Duyệt & giao link** → form, mỗi deco một ô `https://discord.gift/...` (nhận cả
   `discord.com/gifts/...`). Sai/trùng thì form mở lại vẫn giữ những gì đã nhập.
-- Giao thành công → tin hàng chờ chuyển xanh, khách nhận DM link (assistant) + DM hoàn
+- Giao thành công → tin đơn trên feed chuyển xanh, khách nhận DM link (assistant) + DM hoàn
   thành/xin legit (Shop). Link chỉ còn bản che (`discord.gift/AbCd…wxYz`) trong DB.
 - **Khách chặn DM** → đơn không hoàn thành, link được giữ để bấm **Gửi lại DM** khi
   khách mở DM; hoặc **Nhập lại link** / **Hủy đơn**.
@@ -73,7 +75,16 @@ Panel gửi lệnh `decor.gift.create` qua kênh bus cho Auto → Auto ghi đơn
 panel** — từ đó duyệt / hủy / thử lại y như đơn trả bằng QR. Tạo lại cùng một form
 (panel gửi lại sau khi hết giờ chờ) không tạo đơn thứ hai.
 
-Đơn deco gift không có nút ✅/❌ ở kênh hàng chờ, không hiện trong `/done` `/cancel`
+## Tin đơn trên feed
+
+Mỗi đơn (QR hay tạo trên panel) là **một tin** trong kênh feed đơn auto, đăng bằng webhook lúc
+đơn được ghi (trước khi Shop mở đơn): khách (tag, không ping), tên các deco, mã `arnto_N`, trạng
+thái ⏳ Đang chờ xử lý → ✅ Đã hoàn thành / 🚫 Đã huỷ — sửa tại chỗ. Link tin đi kèm `order.create`
+(`statusUrl`): Shop **không** đăng vào kênh hàng chờ nữa, nút "Xem trạng thái" trong DM của Shop
+mở tin feed. Không có webhook (hoặc đăng lỗi) → Shop đăng hàng chờ như cũ. Đơn mở trước khi có
+feed vẫn ở hàng chờ tới khi xong.
+
+Đơn deco gift không có nút ✅/❌, không hiện trong `/done` `/cancel`
 `/remove` của Shop, và trang Orders của panel không hoàn thành/hủy được — tất cả để
 không đơn nào bị đóng khi khách chưa nhận link.
 

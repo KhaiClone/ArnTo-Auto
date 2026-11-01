@@ -6,6 +6,8 @@
  *  - Payment (AutoBank, like AutoBadge)
  *  - Orders: the shop's order through the bot-panel, the staff-channel message,
  *    approve (links → ArnTo-assistant DMs them) / cancel, retries
+ *  - The order's message in the order feed (functions/orderFeed.js), in place of
+ *    the shop's waiting list
  *
  * The other half is the bot-panel (server/services/decorGiftService.js): it reads
  * the decor data, asks ArnTo-Shop to open / complete / cancel the order and
@@ -31,6 +33,7 @@ const {
     ThumbnailBuilder,
 } = require("discord.js");
 const panel = require("./PanelDecoGift");
+const orderFeed = require("../functions/orderFeed");
 const pricing = require("../functions/pricing");
 const { decorMedia } = require("../functions/decorImage");
 const { vietQr } = require("../functions/vietQr");
@@ -737,8 +740,9 @@ async function handlePaid(client, paymentId, bankMessage) {
     });
 }
 
-/** A paid order just recorded: the shop's order, the staff card, and word to the buyer. */
+/** A paid order just recorded: its feed message, the shop's order, the staff card, and word to the buyer. */
 async function _open(client, id) {
+    await _ensureFeed(client, id);
     const order = await _ensureShopOrder(client, id);
     await refreshStaff(client, order);
     if (!order.shopOrderId) {
@@ -839,7 +843,11 @@ async function createByHand(client, { id, buyerId, items, total, reseller, note,
     return res;
 }
 
-/** The shop's order for this payment (the panel makes it idempotent). */
+/**
+ * The shop's order for this payment (the panel makes it idempotent). With a feed
+ * message, its link goes along (statusUrl): the shop then posts nothing in its
+ * waiting list and its DMs' "Xem trạng thái" opens the feed message.
+ */
 async function _ensureShopOrder(client, id) {
     const order = await getOrder(client, id);
     if (!order || order.shopOrderId) return order;
@@ -850,6 +858,7 @@ async function _ensureShopOrder(client, id) {
             sellerId: settings(client).decoGiftSellerId,
             items: order.items.map(({ sku_id, name, type, price }) => ({ sku_id, name, type, price })),
             total: order.total,
+            ...(order.feedUrl ? { statusUrl: order.feedUrl } : {}),
         });
         if (!res?.orderId) throw new Error("panel không trả về mã đơn");
         return _update(client, id, { shopOrderId: res.orderId, waitingUrl: res.waitingUrl || null, shopError: null, tries: 0 });
@@ -1088,7 +1097,7 @@ function staffView(client, o) {
         text(
             [
                 "## 🎁 Đơn Deco Gift",
-                `**Mã đơn:** ${o.shopOrderId ? `\`${o.shopOrderId}\`${o.waitingUrl ? ` · [hàng chờ](${o.waitingUrl})` : ""}` : "*chưa có*"} · ${m ? "mã" : "thanh toán"} \`${o.id}\``,
+                `**Mã đơn:** ${o.shopOrderId ? `\`${o.shopOrderId}\`${o.waitingUrl ? ` · [tin đơn](${o.waitingUrl})` : ""}` : "*chưa có*"} · ${m ? "mã" : "thanh toán"} \`${o.id}\``,
                 `**Khách:** <@${o.userId}> (\`${o.userId}\`)`,
                 m
                     ? `**Tổng:** ${money(o.total)}${o.reseller ? " (giá CTV)" : ""} · 🧾 **tạo trên panel** bởi ${m.byId ? `<@${m.byId}>` : `**${m.by}**`} lúc ${ts(o.paidAt)}`
@@ -1113,9 +1122,71 @@ function staffView(client, o) {
     return { components: [c] };
 }
 
-/** Post or update the order's card in the staff channel. */
+// ── Order feed ─────────────────────────────────────────────────────────────────
+// One message per order in the order feed (with Auto Quest and Auto Badge), where
+// the shop's waiting list showed it before: posted when the order is recorded —
+// before the shop's order, which links its DMs to it — and edited as it goes.
+// The buyer sees it: decors, order id and state only, no money, no links.
+
+const FEED_OF = { paid: "wait", delivering: "wait", dm_failed: "wait", delivered: "done", completed: "done", cancelled: "cancelled" };
+const FEED_STATE = {
+    wait: { text: "⏳ Đang chờ xử lý", color: 0xfee75c },
+    done: { text: "✅ Đã hoàn thành", color: 0x57f287 },
+    cancelled: { text: "🚫 Đã huỷ", color: 0xed4245 },
+};
+const _feedKey = (o) => `${FEED_OF[o.status] ?? "wait"}|${o.shopOrderId || ""}`;
+
+function feedEmbed(client, o) {
+    const st = FEED_STATE[FEED_OF[o.status] ?? "wait"];
+    const thumb = o.items.find((it) => /^https:\/\//.test(it.thumb || ""))?.thumb;
+    return client.embed(
+        o.items.map((it, i) => `**${i + 1}. ${it.sku_id ? `[${it.name}](${shopUrl(it.sku_id)})` : it.name}** · ${it.typeLabel || "Decor"}`).join("\n"),
+        {
+            title: "🎁 Đơn Deco Gift",
+            color: st.color,
+            fields: [
+                { name: "👤 Khách hàng", value: `<@${o.userId}>`, inline: true },
+                { name: "🧾 Mã đơn", value: o.shopOrderId ? `\`${o.shopOrderId}\`` : "—", inline: true },
+                { name: "📌 Trạng thái", value: st.text, inline: true },
+            ],
+            thumbnail: thumb ? { url: thumb } : null,
+            footer: { text: `DECO GIFT · ${o.id}` },
+            timestamp: true,
+        },
+    );
+}
+
+// Feed fields are written without touching updatedAt, which paces the sweep's retries.
+const _setFeed = (client, id, patch) => _serial(() => client.db.findOneAndUpdate(ORDER_DB, { id }, patch));
+
+/**
+ * Post the order's feed message, once. Not for an order the shop was already asked
+ * to open without one (it is in the waiting list). No feed / Discord refused → none:
+ * the shop's waiting list shows it, as before.
+ */
+async function _ensureFeed(client, id) {
+    const order = await getOrder(client, id);
+    if (!order || order.feedMessageId || order.shopOrderId || order.tries) return order;
+    const posted = await orderFeed.post(client, order.userId, feedEmbed(client, order));
+    if (!posted) return order;
+    return _setFeed(client, id, { feedMessageId: posted.messageId, feedUrl: posted.url, feedState: _feedKey(order) });
+}
+
+/** Edit the feed message when what it shows (state, shop order id) changed. */
+async function refreshFeed(client, order) {
+    const o = (order?.id && (await getOrder(client, order.id))) || order;
+    if (!o?.feedMessageId || o.feedGone || o.feedState === _feedKey(o)) return;
+    const res = await orderFeed.edit(client, o.feedMessageId, o.userId, feedEmbed(client, o));
+    if (res === "gone") await _setFeed(client, o.id, { feedGone: true });
+    else if (res) await _setFeed(client, o.id, { feedState: _feedKey(o) });
+}
+
+// ── Staff channel card ─────────────────────────────────────────────────────────
+
+/** Post or update the order's card in the staff channel — and its feed message. */
 async function refreshStaff(client, order) {
     if (!order) return;
+    await refreshFeed(client, order).catch((e) => console.warn(`[AutoDecoGift] feed message ${order.id}: ${e.message}`));
     const channelId = order.staffChannelId || settings(client).decoGiftStaffChannelId;
     if (!channelId) return console.warn("[AutoDecoGift] DECO_GIFT_STAFF_CHANNEL_ID is not set");
     try {

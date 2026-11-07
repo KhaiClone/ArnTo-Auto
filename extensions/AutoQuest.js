@@ -19,6 +19,7 @@ const {
     randomUUID,
 } = require("crypto");
 const normalizeDiscordTokenInput = require("../functions/normalizeDiscordTokenInput");
+const accountLabel = require("../functions/accountLabel");
 const { nanoid } = require("nanoid");
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1031,6 +1032,18 @@ async function getStoredAccountOwner(client, accountId) {
     return null;
 }
 
+/**
+ * The account's name as last seen — the running entry, else the stored record —
+ * for messages that must say which account a dead token belongs to (the token
+ * cannot be asked any more). null when nothing knows it.
+ */
+async function getAccountUsername(client, userId, accountId) {
+    const running = getRunningMap(userId).get(accountId)?.username;
+    if (running) return running;
+    const stored = (await _readAccounts(client))[userId]?.[accountId]?.username;
+    return typeof stored === "string" && stored && stored !== "Unknown" ? stored : null;
+}
+
 async function hasStoredAccountEntry(client, userId, accountId) {
     const rawData = await _readAccounts(client);
     const r = rawData[userId]?.[accountId];
@@ -2010,6 +2023,14 @@ async function createQuestPayment(client, { userId, accountId, questIds }) {
 
             // DM user — accurate message: running now vs waiting for token re-entry.
             try {
+                // A dead token names its account: the buyer may have several. The
+                // running entry is read before the unlock (it stops that entry).
+                const acc = pendingToken
+                    ? accountLabel(
+                          runningEntry?.username ?? (await getAccountUsername(client, userId, accountId)),
+                          accountId,
+                      )
+                    : null;
                 const user = await client.users.fetch(userId).catch(() => null);
                 if (user)
                     await user.send({
@@ -2018,10 +2039,13 @@ async function createQuestPayment(client, { userId, accountId, questIds }) {
                                 [
                                     `Mã đơn: \`${payment.id}\``,
                                     `Số tiền: ${Number(amount).toLocaleString("vi-VN")}đ`,
+                                    acc ? `Account: ${acc}` : null,
                                     pendingToken
                                         ? `⚠️ Token account đã die trong lúc chờ thanh toán. Vào panel Auto Quest và bấm nút **🔑 Cập nhật token** để gửi lại token — bot sẽ tự chạy ${selectedQuestIds.length} quest đã mua (đã lưu, không mất).`
                                         : `Đã mở chạy ${selectedQuestIds.length} quest đã chọn.`,
-                                ].join("\n"),
+                                ]
+                                    .filter(Boolean)
+                                    .join("\n"),
                                 {
                                     title: pendingToken
                                         ? "Đã thanh toán — cần cập nhật token"
@@ -2793,6 +2817,7 @@ module.exports = {
     getTokenRefreshRecord,
     markTokenRefreshRequired,
     getStoredAccountOwner,
+    getAccountUsername,
     hasStoredAccountEntry,
     getQuestBatchNotification,
     setQuestBatchNotification,

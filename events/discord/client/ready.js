@@ -13,6 +13,7 @@ const {
     activateMonthlyFromPayment,
     moveLocalMonthlyToPanel,
     warmBuildNumber,
+    getAccountUsername,
 } = require("../../../extensions/AutoQuest");
 const {
     editOrderLog,
@@ -21,6 +22,15 @@ const {
     unlockPaymentIfPaid,
 } = require("../../../functions/autoQuestHelpers");
 const questFeed = require("../../../functions/questFeed");
+const accountLabel = require("../../../functions/accountLabel");
+
+/** "**name** (`id`)" of the account whose token died while its payment was on the
+ *  way — the buyer may have several. `knownName` = the running entry's, read before
+ *  the unlock stopped it; else the stored record's. */
+async function _deadTokenAccount(client, userId, accountId, knownName) {
+    const name = knownName || (await getAccountUsername(client, userId, accountId).catch(() => null));
+    return accountLabel(name, accountId);
+}
 
 module.exports = {
     name: "clientReady",
@@ -76,11 +86,16 @@ module.exports = {
                 const paidPayment = await markPaymentAsPaid(client, paymentId);
                 if (!paidPayment) return;
 
+                // Read before the unlock: it stops the running entry holding the name.
+                const knownName = getRunningMap(userId).get(paidPayment.accountId)?.username;
                 const unlockResult = await unlockPaymentIfPaid(
                     client,
                     paidPayment,
                 ).catch(() => false);
                 const pendingToken = unlockResult === "pending_token";
+                const acc = pendingToken
+                    ? await _deadTokenAccount(client, userId, paidPayment.accountId, knownName)
+                    : null;
 
                 const user = await client.users.fetch(userId).catch(() => null);
                 if (user) {
@@ -91,10 +106,13 @@ module.exports = {
                                     [
                                         `Mã đơn: \`${paymentId}\``,
                                         `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
+                                        acc ? `Account: ${acc}` : null,
                                         pendingToken
                                             ? "⚠️ Token account đã die. **Nhập lại token** để chạy quest đã mua (đã lưu, không mất)."
                                             : "Đã xác nhận thanh toán. Đã mở chạy quest đã chọn.",
-                                    ].join("\n"),
+                                    ]
+                                        .filter(Boolean)
+                                        .join("\n"),
                                     {
                                         title: pendingToken
                                             ? "Đã thanh toán — cần nhập lại token"
@@ -166,12 +184,19 @@ module.exports = {
                     // without quest ids or a monthly runId.
                     if (type === "token_dead") {
                         await questFeed.runEnded(client, { userId, accountId, username, plan: "single", state: "paused" });
-                        // Update order log to show paused state (not cancelled — quest may resume after token refresh)
+                        // Update order log to show paused state (not cancelled — quest may resume after token refresh).
+                        // It names the account: the edit replaces the log's fields.
+                        const acc = accountLabel(username, accountId);
                         await cancelOrderLog(
                             client,
                             userId,
                             accountId,
-                            "⏸️ Đơn **tạm dừng**: token account bị dead. Nhập lại token để tiếp tục.",
+                            [
+                                "⏸️ Đơn **tạm dừng**: token account bị dead. Nhập lại token để tiếp tục.",
+                                acc ? `Account: ${acc}` : null,
+                            ]
+                                .filter(Boolean)
+                                .join("\n"),
                         );
                         return user.send({
                             embeds: [
@@ -363,12 +388,19 @@ module.exports = {
                         client,
                         paymentId,
                     );
+                    // Read before the unlock: it stops the running entry holding the name.
+                    const knownName = paidPayment
+                        ? getRunningMap(userId).get(paidPayment.accountId)?.username
+                        : null;
                     const unlockResult = paidPayment
                         ? await unlockPaymentIfPaid(client, paidPayment).catch(
                               () => false,
                           )
                         : false;
                     const pendingToken = unlockResult === "pending_token";
+                    const acc = pendingToken
+                        ? await _deadTokenAccount(client, userId, paidPayment.accountId, knownName)
+                        : null;
                     const user = await client.users
                         .fetch(userId)
                         .catch(() => null);
@@ -380,10 +412,13 @@ module.exports = {
                                         [
                                             `Mã đơn: \`${paymentId}\``,
                                             `Số tiền: ${Number(entry.amount).toLocaleString("vi-VN")}đ`,
+                                            acc ? `Account: ${acc}` : null,
                                             pendingToken
                                                 ? "⚠️ Token account đã die. **Nhập lại token** để chạy quest đã mua (đã lưu, không mất)."
                                                 : "Bot phát hiện thanh toán khi khởi động lại. Đã mở chạy quest đã chọn.",
-                                        ].join("\n"),
+                                        ]
+                                            .filter(Boolean)
+                                            .join("\n"),
                                         {
                                             title: pendingToken
                                                 ? "Đã thanh toán — cần nhập lại token"

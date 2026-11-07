@@ -18,6 +18,7 @@ const PanelBadge = require("./PanelBadge");
 const pricing = require("../functions/pricing");
 const badgeLog = require("../functions/autoBadgeHelpers");
 const { vietQr } = require("../functions/vietQr");
+const accountLabel = require("../functions/accountLabel");
 
 const EXPIRE_MS = 10 * 60 * 1000;
 const DB = "badge_payments";
@@ -76,16 +77,35 @@ async function quote(client, { token, badgeKey, tierKey, buyerId }) {
 
 // ── Thanh toán ───────────────────────────────────────────────────────────────────
 
-/** Tạo đơn chờ thanh toán. `reseller`: amount là giá CTV (từ quote của panel). */
+/**
+ * Tạo đơn chờ thanh toán. `reseller`: amount là giá CTV (từ quote của panel).
+ * `accountId` + `username` (cũng từ quote) là tài khoản nhận badge — giữ lại để tin
+ * báo token chết ghi được acc nào: lúc đó token không còn hỏi Discord được nữa.
+ */
 async function createPayment(
     client,
-    { userId, token, badgeKey, tierKey, tierName, unit, threshold, amount, reseller = false, hasNitro },
+    {
+        userId,
+        token,
+        badgeKey,
+        tierKey,
+        tierName,
+        unit,
+        threshold,
+        amount,
+        reseller = false,
+        hasNitro,
+        accountId = null,
+        username = null,
+    },
 ) {
     const transferCode = await _uniqueCode(client);
     const payment = {
         id: _newPaymentId(),
         type: "badge",
         userId,
+        accountId: accountId != null ? String(accountId) : null,
+        username: username || null,
         badgeKey,
         tierKey,
         tierName,
@@ -276,13 +296,16 @@ async function runOrder(client, context) {
         // Panel không với tới được: tiền đã thu mà chưa chạy được. Không im lặng —
         // báo khách và log để xử lý tay.
         const payment = await getPaymentById(client, paymentId);
-        await badgeLog.updateOrderLog(client, payment, "failed", `Không khởi chạy được: ${err.message}`);
+        // Token chết giữa lúc báo giá và lúc tiền về: ghi rõ acc nào (lưu từ quote).
+        const acc = err.tokenDead ? accountLabel(payment?.username, payment?.accountId) : null;
+        const accLine = acc ? `\nAccount: ${acc}` : "";
+        await badgeLog.updateOrderLog(client, payment, "failed", `Không khởi chạy được: ${err.message}${accLine}`);
         await badgeLog.updateFeed(client, payment, "failed");
         await badgeLog.dm(
             client,
             userId,
             client.embed(
-                `Không khởi chạy được đơn: ${err.message}\n` +
+                `Không khởi chạy được đơn: ${err.message}${accLine}\n` +
                     "Vui lòng liên hệ admin — đơn của bạn không bị mất.",
                 {
                     title: "⚠️ Đã nhận thanh toán nhưng chưa chạy được",
@@ -393,15 +416,24 @@ async function handlePanelEvent(client, event) {
             await badgeLog.updateFeed(client, payment, "manual_review");
             break;
 
-        case "failed":
+        case "failed": {
+            // Token chết: ghi rõ acc nào — khách có thể mua cho nhiều acc. Panel gửi
+            // kèm tên + id trong sự kiện; panel cũ chưa gửi thì lấy từ payment.
+            const acc =
+                event.status === "token_dead"
+                    ? accountLabel(event.username ?? payment?.username, event.accountId ?? payment?.accountId)
+                    : null;
             await send(
                 "❌ Đơn thất bại",
                 badgeLog.COLOR.bad,
                 `${event.error ?? "Lỗi không xác định"}. Admin sẽ liên hệ với bạn.`,
+                acc ? [{ name: "🎮 Account", value: acc, inline: true }] : [],
             );
-            await badgeLog.updateOrderLog(client, payment, "failed", event.error ?? null);
+            const note = [event.error ?? null, acc ? `Account: ${acc}` : null].filter(Boolean).join("\n");
+            await badgeLog.updateOrderLog(client, payment, "failed", note || null);
             await badgeLog.updateFeed(client, payment, "failed");
             break;
+        }
 
         default:
             break; // order_created / status / progress: không cần làm phiền khách

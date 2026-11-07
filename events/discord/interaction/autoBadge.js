@@ -210,6 +210,9 @@ async function _startPayment(client, interaction, session, badgeKey, tierKey) {
         amount: q.price,
         reseller: q.reseller === true,
         hasNitro: q.hasNitro,
+        // Acc nhận badge — tin báo token chết ghi tên + id của nó.
+        accountId: q.accountId ?? null,
+        username: q.username ?? null,
     });
 
     return interaction.editReply({

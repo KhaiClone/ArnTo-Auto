@@ -1,5 +1,6 @@
 const { cancelOrderLog } = require("./autoQuestHelpers");
 const questFeed = require("./questFeed");
+const accountLabel = require("./accountLabel");
 
 /**
  * A quest event from the bot-panel (it runs the quests; payment stays here).
@@ -32,17 +33,31 @@ module.exports = async function handleQuestEvent(client, body) {
         await questFeed.runEnded(client, { ...who, state: "stopped" });
     } else if (type === "status" && status === "token_dead") {
         await questFeed.runEnded(client, { ...who, state: "paused" });
-        await cancelOrderLog(client, userId, accountId, "⏸️ Token account bị dead. Nhập lại token để tiếp tục.").catch(() => null);
+        // Name the account (the panel sends its name + id): a buyer with several
+        // accounts has to know which token to send again, and so does staff.
+        const acc = accountLabel(username, accountId);
+        const accLine = acc ? `Account: ${acc}` : null;
+        await cancelOrderLog(
+            client,
+            userId,
+            accountId,
+            ["⏸️ Token account bị dead. Nhập lại token để tiếp tục.", accLine].filter(Boolean).join("\n"),
+        ).catch(() => null);
         // Still a DM: this one asks the buyer to do something.
         const user = await client.users.fetch(userId).catch(() => null);
         if (user)
             await user
                 .send({
                     embeds: [
-                        client.embed("Token account đã dead. Vào panel nhập token để tiếp tục chạy quest đã mua.", {
-                            title: "Cần nhập lại token",
-                            color: 0xfee75c,
-                        }),
+                        client.embed(
+                            [accLine, "Token account đã dead. Vào panel nhập token để tiếp tục chạy quest đã mua."]
+                                .filter(Boolean)
+                                .join("\n"),
+                            {
+                                title: "Cần nhập lại token",
+                                color: 0xfee75c,
+                            },
+                        ),
                     ],
                 })
                 .catch(() => null);

@@ -5,6 +5,7 @@ const {
 } = require("discord.js");
 
 const pricing = require("../../../functions/pricing");
+const purchaseNotes = require("../../../functions/purchaseNotes");
 
 module.exports = {
     deferReply: {},
@@ -52,6 +53,12 @@ module.exports = {
                 {
                     name: "⏱ Lưu ý thanh toán",
                     value: "QR có hạn 10 phút. Chuyển **đúng nội dung** để hệ thống tự xác nhận.",
+                    inline: false,
+                },
+                // Lưu ý chung của mọi panel mua tự động (functions/purchaseNotes.js).
+                {
+                    name: "⚠️ Lưu ý",
+                    value: purchaseNotes.lines().join("\n"),
                     inline: false,
                 },
             );

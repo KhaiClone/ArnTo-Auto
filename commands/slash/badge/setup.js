@@ -9,6 +9,7 @@ const {
 
 const pricing = require("../../../functions/pricing");
 const emojis = require("../../../configs/badgeEmojis");
+const purchaseNotes = require("../../../functions/purchaseNotes");
 
 // Ảnh banner của panel. Để trống thì embed không có ảnh.
 const BANNER_URL = process.env.BADGE_PANEL_IMAGE || "";
@@ -76,9 +77,12 @@ module.exports = {
         if (hasChoice) {
             lines.push("- **HypeSquad**: có thể thay đổi giữa các màu.");
         }
+        // Lưu ý chung của mọi panel mua tự động (functions/purchaseNotes.js). Dòng
+        // ticket giữ cỡ chữ lớn ở cuối như dòng "Liên hệ trực tiếp" trước đây.
         lines.push(
             "- Cách lấy token: <#1485326007308386556>",
-            "### Liên hệ trực tiếp với shop qua <#1246028759597846650>",
+            `- ${purchaseNotes.NO_REFUND}`,
+            `### ${purchaseNotes.TICKET}`,
         );
 
         const embed = new EmbedBuilder()

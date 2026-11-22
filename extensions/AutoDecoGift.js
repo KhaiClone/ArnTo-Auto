@@ -35,6 +35,7 @@ const {
 const panel = require("./PanelDecoGift");
 const orderFeed = require("../functions/orderFeed");
 const pricing = require("../functions/pricing");
+const purchaseNotes = require("../functions/purchaseNotes");
 const { decorMedia } = require("../functions/decorImage");
 const { vietQr } = require("../functions/vietQr");
 
@@ -218,6 +219,10 @@ function panelMessage(client) {
                     `2. Chọn tối đa **${MAX_ITEMS} deco** mỗi đơn, xem lại ảnh trong **Giỏ hàng**.`,
                     "3. Bấm **Thanh toán** và quét QR (hết hạn sau 10 phút).",
                     "4. Admin duyệt đơn, link quà được gửi qua **tin nhắn riêng** — nhớ mở DM.",
+                    "",
+                    // The notes every automatic sales panel shows (functions/purchaseNotes.js).
+                    "**⚠️ Lưu ý**",
+                    ...purchaseNotes.lines(),
                 ].join("\n"),
                 { title: "🎁 Deco Gift — Mua tự động" },
             ),
